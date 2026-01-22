@@ -90,8 +90,8 @@ namespace ToolAdb
         private void BuildModernLayout()
         {
             this.Controls.Clear();
-            this.Size = new Size(1150, 750);
-            this.Text = "ADB Pro v2.0";
+            this.Size = new Size(800, 600);
+            this.Text = "ADB Pro v2.5";
             this.BackColor = Color.FromArgb(243, 244, 246);
             this.Font = new Font("Segoe UI", 9f);
 
@@ -108,7 +108,7 @@ namespace ToolAdb
             var pnlSidebar = splitMain.Panel1;
             pnlSidebar.BackColor = Color.White;
             pnlSidebar.Padding = new Padding(10);
-            var lblSideTitle = new Label { Text = "THIẾT BỊ KẾT NỐI", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 9f, FontStyle.Bold), ForeColor = Color.Gray };
+            var lblSideTitle = new Label { Text = "THIẾT BỊ", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 9f, FontStyle.Bold), ForeColor = Color.Green };
 
             _clbSidebarDevices = new CheckedListBox
             {
@@ -121,19 +121,19 @@ namespace ToolAdb
 
             var pnlSideBtns = new Panel { Dock = DockStyle.Bottom, Height = 140 };
 
-            var btnSelectAll = CreateSideButton("Chọn Tất Cả", Color.FromArgb(94, 148, 255));
+            var btnSelectAll = CreateSideButton("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
             btnSelectAll.Dock = DockStyle.Top;
             btnSelectAll.Click += (s, e) => ToggleSidebarSelection(true);
 
-            var btnSelectNone = CreateSideButton("Bỏ Chọn", Color.FromArgb(148, 163, 184));
+            var btnSelectNone = CreateSideButton("Bỏ Chọn", Color.FromArgb(100, 116, 139));
             btnSelectNone.Dock = DockStyle.Top;
             btnSelectNone.Click += (s, e) => ToggleSidebarSelection(false);
 
-            var btnRenameSide = CreateSideButton("Đổi tên thiết bị", Color.FromArgb(14, 165, 233));
+            var btnRenameSide = CreateSideButton("Đổi tên", Color.FromArgb(245, 158, 11));
             btnRenameSide.Dock = DockStyle.Top;
             btnRenameSide.Click += (s, e) => RenameSelectedDevice();
 
-            var btnRefreshSide = CreateSideButton("Làm mới (Refresh)", Color.FromArgb(16, 185, 129));
+            var btnRefreshSide = CreateSideButton("Refresh", Color.FromArgb(16, 185, 129));
             btnRefreshSide.Dock = DockStyle.Bottom;
             btnRefreshSide.Click += (s, e) => RefreshDeviceList();
 
@@ -209,16 +209,17 @@ namespace ToolAdb
 
             pnlContent.Controls.Add(tabControl);
 
-            // Status Bar
-            var pnlStatus = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = Color.White };
-            _progressBar = new Guna2ProgressBar { Dock = DockStyle.Right, Width = 300, FillColor = Color.WhiteSmoke, ProgressColor = Color.FromArgb(16, 185, 129), ProgressColor2 = Color.FromArgb(59, 130, 246) };
-            _progressBar.Visible = false;
-            _lblStatusInfo = new Label { Text = "Ready", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(10, 0, 0, 0), ForeColor = Color.DimGray };
-            pnlStatus.Controls.Add(_lblStatusInfo);
-            pnlStatus.Controls.Add(_progressBar);
+            pnlContent.Controls.Add(tabControl);
 
+            // =========================================================
+            // CHỐT HẠ: CODE GỌN NHẤT - KHÔNG CẦN CONTAINER TRUNG GIAN
+            // =========================================================
+
+            // Chỉ cần thêm thẳng giao diện chính vào Form
             this.Controls.Add(splitMain);
-            this.Controls.Add(pnlStatus);
+
+            // Đảm bảo nó luôn nằm trên cùng (dù thực ra giờ chỉ còn một mình nó)
+            splitMain.BringToFront();
         }
 
         // ==========================================
@@ -352,42 +353,77 @@ namespace ToolAdb
             var tabNewAcc = new TabPage { Text = "Kho", BackColor = Color.White };
             _gridStorage = CreateEditableAccountGrid(true);
 
-            // ACTION BAR
+            // --- ACTION BAR (PHIÊN BẢN COMPACT) ---
             var pnlStoreAction = new FlowLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 45,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(0, 5, 0, 0),
-                // ▼▼▼ YÊU CẦU 2: SỬA LỖI MẤT NÚT ▼▼▼
-                WrapContents = false, // Không cho xuống dòng
-                AutoScroll = true     // Nếu thiếu chỗ thì hiện thanh cuộn
+                Padding = new Padding(1), // Padding siêu nhỏ
+                WrapContents = true
             };
 
-            var btnLoadAcc = new Guna2Button { Text = "Reload", Height = 35, Width = 70, FillColor = Color.Gray };
+            // Định nghĩa Style nhỏ gọn
+            int compactH = 28; // Chiều cao nút giảm xuống 28
+            var compactFont = new Font("Segoe UI", 8.25f, FontStyle.Regular);
+
+            var btnLoadAcc = new Guna2Button
+            {
+                Text = "Nạp",
+                Height = compactH,
+                Width = 50, // Nút bé lại
+                FillColor = Color.Gray,
+                Font = compactFont
+            };
             btnLoadAcc.Click += (s, e) => LoadAccountsToGrid();
 
-            var btnImportClipboard = new Guna2Button { Text = "➕ Thêm Mail", Height = 35, Width = 80, FillColor = Color.SeaGreen };
+            var btnImportClipboard = new Guna2Button
+            {
+                Text = "➕ Thêm",
+                Height = compactH,
+                Width = 60,
+                FillColor = Color.SeaGreen,
+                Font = compactFont
+            };
             btnImportClipboard.Click += (s, e) => ActionPasteImportToStorage();
 
             _lblStorageCount = new Label
             {
-                Text = "Còn: 0",
+                Text = "0", // Chỉ hiện số
                 AutoSize = true,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
                 ForeColor = Color.DarkSlateGray,
-                Padding = new Padding(5, 10, 5, 0)
+                Padding = new Padding(2, 6, 2, 0), // Căn chỉnh text giữa dòng
+                Margin = new Padding(0)
             };
 
-            var btnPushToInput = new Guna2Button { Text = "Chuyển sang Input ▼", Width = 110, Height = 35, FillColor = Color.FromArgb(14, 165, 233) };
+            var btnPushToInput = new Guna2Button
+            {
+                Text = "Send Input ▼", // Rút gọn chữ
+                Width = 80,
+                Height = compactH,
+                FillColor = Color.FromArgb(14, 165, 233),
+                Font = compactFont
+            };
             btnPushToInput.Click += (s, e) => TransferAccountsToInput();
 
-            var numPush = new Guna2NumericUpDown { Value = 1, Minimum = 1, Maximum = 1000, Width = 60, Height = 35 };
+            var numPush = new Guna2NumericUpDown
+            {
+                Value = 1,
+                Minimum = 1,
+                Maximum = 1000,
+                Width = 45, // Ô số bé lại
+                Height = compactH
+            };
 
+            var lblSL = new Label { Text = "SL:", TextAlign = ContentAlignment.MiddleRight, AutoSize = true, Padding = new Padding(0, 6, 0, 0), Font = compactFont };
+
+            // Thêm vào Panel (Thứ tự tối ưu)
             pnlStoreAction.Controls.Add(btnLoadAcc);
             pnlStoreAction.Controls.Add(btnImportClipboard);
             pnlStoreAction.Controls.Add(_lblStorageCount);
-            pnlStoreAction.Controls.Add(new Label { Text = "SL:", TextAlign = ContentAlignment.MiddleRight, AutoSize = true, Padding = new Padding(0, 10, 0, 0) });
+            pnlStoreAction.Controls.Add(lblSL);
             pnlStoreAction.Controls.Add(numPush);
             pnlStoreAction.Controls.Add(btnPushToInput);
 
@@ -402,66 +438,228 @@ namespace ToolAdb
             _tabStorage.TabPages.Add(tabUsedAcc);
             pnlStorage.Controls.Add(_tabStorage);
 
-            // 2. INPUT AREA
-            var pnlInput = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(10) };
-            _txtAccountInput = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), PlaceholderText = "Input..." };
-            var pnlInputBtns = new Panel { Dock = DockStyle.Bottom, Height = 40 };
-            var btnRunEmail = new Guna2Button { Text = "Gõ Email", Width = 100, Dock = DockStyle.Left, FillColor = Color.Teal };
+            // =========================================================
+            // 2. INPUT AREA (ĐÃ CĂN CHỈNH: THẲNG HÀNG & CÂN ĐỐI)
+            // =========================================================
+
+            var pnlInput = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.White,
+                // Padding: Trên/Trái/Phải = 3px, Dưới = 0px (Để nút sát đáy, không bị hở)
+                Padding = new Padding(3, 3, 3, 0),
+                RowCount = 3,
+                ColumnCount = 1
+            };
+
+            // Dòng 1: Tiêu đề (AutoSize)
+            pnlInput.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            // Dòng 2: Textbox (100% không gian còn lại)
+            pnlInput.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+            // Dòng 3: Nút bấm (Cao 32px - Chuẩn đẹp, không quá bé, không quá to)
+            pnlInput.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
+
+            // --- 1. Tiêu đề ---
+            var lblInputTitle = new Label
+            {
+                Text = "Input Area",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                ForeColor = Color.DimGray,
+                TextAlign = ContentAlignment.BottomLeft,
+                Margin = new Padding(2, 0, 0, 2)
+            };
+
+            // --- 2. Textbox ---
+            _txtAccountInput = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 9.5f),
+                PlaceholderText = "Nhập list mail|pass..."
+            };
+
+            // --- 3. Panel Nút bấm ---
+            var pnlInputBtns = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0), // Xóa sạch Margin để không bị thụt
+                Padding = new Padding(0),
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            pnlInputBtns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            pnlInputBtns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+
+            var btnRunEmail = new Guna2Button
+            {
+                Text = "Email",
+                Dock = DockStyle.Fill,
+                FillColor = Color.Teal,
+                Margin = new Padding(0, 1, 1, 0), // Cách trên 1px, Phải 1px
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                BorderRadius = 1
+            };
             btnRunEmail.Click += async (s, e) => await ActionSendEmailAsync();
-            var btnRunPass = new Guna2Button { Text = "Gõ Pass", Width = 100, Dock = DockStyle.Right, FillColor = Color.OrangeRed };
+
+            var btnRunPass = new Guna2Button
+            {
+                Text = "Pass",
+                Dock = DockStyle.Fill,
+                FillColor = Color.OrangeRed,
+                Margin = new Padding(1, 1, 0, 0), // Cách trên 1px, Trái 1px
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                BorderRadius = 1
+            };
             btnRunPass.Click += async (s, e) => await ActionSendPassAsync();
-            pnlInputBtns.Controls.Add(btnRunEmail);
-            pnlInputBtns.Controls.Add(btnRunPass);
 
-            pnlInput.Controls.Add(_txtAccountInput);
-            pnlInput.Controls.Add(pnlInputBtns);
-            pnlInput.Controls.Add(new Label { Text = "Khu vực chạy Tool (Input)", Dock = DockStyle.Top, Font = new Font("Segoe UI", 9f, FontStyle.Bold), Height = 20 });
+            pnlInputBtns.Controls.Add(btnRunEmail, 0, 0);
+            pnlInputBtns.Controls.Add(btnRunPass, 1, 0);
 
+            // Add vào bảng chính
+            pnlInput.Controls.Add(lblInputTitle, 0, 0);
+            pnlInput.Controls.Add(_txtAccountInput, 0, 1);
+            pnlInput.Controls.Add(pnlInputBtns, 0, 2);
+
+            // Kết nối vào giao diện
             splitLeft.Panel1.Controls.Add(pnlStorage);
             splitLeft.Panel2.Controls.Add(pnlInput);
             pnlLeftContainer.Controls.Add(splitLeft);
             splitMain.Panel1.Controls.Add(pnlLeftContainer);
 
-            // 3. RIGHT (2FA)
-            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10), BackColor = Color.White };
-            _txtSecretInput = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Top, Height = 100, Font = new Font("Consolas", 9f), PlaceholderText = "Secrets..." };
-            _txtSecretInput.TextChanged += (s, e) => ParseSecretsToGrid();
+            // =========================================================
+            // 3. RIGHT (2FA MANAGEMENT) - FULL CODE FIX
+            // =========================================================
 
-            _grid2Fa = new Guna2DataGridView
+            // 1. Khai báo pnlRight (Đây là dòng bạn đang thiếu)
+            var pnlRight = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackgroundColor = Color.White,
-                AllowUserToAddRows = false,
-                RowHeadersVisible = false,
-                ReadOnly = true,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Default,
-                ColumnHeadersHeight = 35,
-                RowTemplate = { Height = 30 }
+                Padding = new Padding(5), // Padding nhỏ gọn 5px
+                BackColor = Color.White
             };
-            _grid2Fa.Columns.Add("idx", "#"); _grid2Fa.Columns[0].Width = 35;
-            _grid2Fa.Columns.Add("code", "CODE");
-            _grid2Fa.Columns[1].DefaultCellStyle.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
-            _grid2Fa.Columns[1].DefaultCellStyle.ForeColor = Color.Teal;
 
-            var btnColCopy = new DataGridViewButtonColumn { Text = "Copy", UseColumnTextForButtonValue = true, HeaderText = "", FillWeight = 40 };
-            _grid2Fa.Columns.Add(btnColCopy);
-            var btnColSend = new DataGridViewButtonColumn { Text = "Gửi >", UseColumnTextForButtonValue = true, HeaderText = "", FillWeight = 40 };
-            _grid2Fa.Columns.Add(btnColSend);
+            // 2. Ô nhập Secret (Dock Top)
+            _txtSecretInput = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Dock = DockStyle.Top,
+                Height = 80, // Giảm chiều cao chút cho gọn
+                Font = new Font("Consolas", 9f),
+                PlaceholderText = "Nhập danh sách Secret Key (Mỗi dòng 1 key)..."
+            };
+            _txtSecretInput.TextChanged += (s, e) => ParseSecretsToGrid();
+
+            // 3. Khởi tạo Bảng 2FA (Đã sửa lỗi hiển thị cột)
+            _grid2Fa = new Guna2DataGridView();
+            _grid2Fa.Dock = DockStyle.Fill;
+            _grid2Fa.BackgroundColor = Color.White;
+            _grid2Fa.AllowUserToAddRows = false;
+            _grid2Fa.RowHeadersVisible = false;
+            _grid2Fa.ReadOnly = true;
+            _grid2Fa.Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Default;
+            _grid2Fa.ColumnHeadersHeight = 35;
+            _grid2Fa.RowTemplate.Height = 30;
+
+            // QUAN TRỌNG: Tắt tự động giãn cột để chỉnh tay
+            _grid2Fa.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
+
+            // --- 1. Cột Số thứ tự (#) - SIÊU NHỎ (25px) ---
+            var colIdx = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "#",
+                Name = "idx",
+                Width = 13, // <--- Cực nhỏ, chỉ vừa đủ hiện số
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+            // Căn giữa số thứ tự và tiêu đề để nhìn cân đối trong không gian hẹp
+            colIdx.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            colIdx.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+
+            // --- 2. Cột Mã 2FA (CODE) - CHIẾM TOÀN BỘ KHÔNG GIAN CÒN LẠI ---
+            var colCode = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "CODE",
+                Name = "code",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill // <--- Quan trọng: Tự động phình to ra
+            };
+            colCode.DefaultCellStyle.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
+            colCode.DefaultCellStyle.ForeColor = Color.Teal;
+            // Căn lề trái + Padding một chút để mã không dính sát vào cột số thứ tự
+            colCode.DefaultCellStyle.Padding = new Padding(5, 0, 0, 0);
+
+            // --- 3. Cột Nút Copy - Cố định (Vừa đủ chữ Copy) ---
+            var colBtnCopy = new DataGridViewButtonColumn
+            {
+                Text = "Copy",
+                UseColumnTextForButtonValue = true,
+                HeaderText = "",
+                Width = 50, // 50px là đủ cho chữ Copy
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+
+            // --- 4. Cột Nút Gửi - Cố định (Vừa đủ chữ Gửi) ---
+            var colBtnSend = new DataGridViewButtonColumn
+            {
+                Text = "Gửi >",
+                UseColumnTextForButtonValue = true,
+                HeaderText = "",
+                Width = 50,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+
+            // Thêm vào bảng
+            _grid2Fa.Columns.Add(colIdx);
+            _grid2Fa.Columns.Add(colCode);
+            _grid2Fa.Columns.Add(colBtnCopy);
+            _grid2Fa.Columns.Add(colBtnSend);
             _grid2Fa.CellContentClick += Grid2Fa_CellContentClick;
 
-            var btnSendAll2Fa = new Guna2Button { Text = "Gửi 2FA All", Height = 35, Dock = DockStyle.Bottom, FillColor = Color.FromArgb(124, 58, 237) };
+            // 4. Nút Gửi All (Dock Bottom)
+            var btnSendAll2Fa = new Guna2Button
+            {
+                Text = "Gửi 2FA All",
+                Height = 35,
+                Dock = DockStyle.Bottom,
+                FillColor = Color.FromArgb(124, 58, 237),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+            };
             btnSendAll2Fa.Click += async (s, e) => await ActionSend2FaToAll();
 
-            pnlRight.Controls.Add(_grid2Fa);
-            pnlRight.Controls.Add(new Panel { Height = 10, Dock = DockStyle.Top });
-            pnlRight.Controls.Add(_txtSecretInput);
-            pnlRight.Controls.Add(btnSendAll2Fa);
-            pnlRight.Controls.Add(new Label { Text = "Quản lý 2FA", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) });
+            // 5. Tiêu đề (Dock Top)
+            var lblTitleRight = new Label { Text = "Quản lý 2FA", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) };
 
+            // 6. SẮP XẾP VÀO PANEL (Thứ tự Add quan trọng cho Docking)
+
+            // Add Grid (Fill) trước để nó nằm nền
+            pnlRight.Controls.Add(_grid2Fa);
+
+            // Add Spacer (Khoảng trắng đệm giữa Grid và Textbox)
+            pnlRight.Controls.Add(new Panel { Height = 5, Dock = DockStyle.Top });
+
+            // Add Textbox Input (Dock Top -> Nằm trên Grid)
+            pnlRight.Controls.Add(_txtSecretInput);
+
+            // Add Title (Dock Top -> Nằm trên cùng)
+            pnlRight.Controls.Add(lblTitleRight);
+
+            // Add Button (Dock Bottom -> Nằm dưới cùng)
+            pnlRight.Controls.Add(btnSendAll2Fa);
+
+            // 7. Thêm Grid vào Grid
+            // Đưa các thành phần Dock Fill lên trên để hiển thị đúng
+            _grid2Fa.BringToFront();
+            btnSendAll2Fa.SendToBack(); // Đẩy nút xuống dưới
+
+            // 8. Add vào giao diện chính
             splitMain.Panel2.Controls.Add(pnlRight);
             page.Controls.Add(splitMain);
 
+            // Load dữ liệu
             LoadAccountsToGrid();
             LoadUsedAccountsToGrid();
         }
@@ -746,13 +944,37 @@ namespace ToolAdb
         {
             LoadDeviceNames();
             var currentChecked = GetTargetDevices();
+
             _clbSidebarDevices.Items.Clear();
-            foreach (var id in GetAdbDeviceIds())
+
+            // 1. Lấy danh sách ID
+            var rawIds = GetAdbDeviceIds();
+
+            // 2. Tạo danh sách tạm chứa ID và Tên hiển thị
+            // Dùng NaturalComparer để so sánh trực tiếp tên hiển thị
+            var items = rawIds.Select(id =>
             {
                 _deviceNameById.TryGetValue(id, out var name);
-                string display = string.IsNullOrEmpty(name) ? id : $"{name} ({id})";
-                _clbSidebarDevices.Items.Add(display, currentChecked.Contains(id));
+
+                // Nếu có tên thì hiển thị tên, nếu không thì hiển thị ID
+                // Logic hiển thị: "Tên (ID)" hoặc "ID"
+                string displayLabel = string.IsNullOrEmpty(name) ? id : $"{name} ({id})";
+
+                // Trả về object chứa thông tin cần thiết
+                return new { Id = id, Display = displayLabel };
+            }).ToList();
+
+            // 3. Sắp xếp danh sách bằng NaturalComparer
+            // Lúc này "Máy 2" sẽ được hiểu là nhỏ hơn "Máy 10"
+            var sorter = new NaturalComparer();
+            var sortedItems = items.OrderBy(x => x.Display, sorter).ToList();
+
+            // 4. Đưa lên giao diện
+            foreach (var item in sortedItems)
+            {
+                _clbSidebarDevices.Items.Add(item.Display, currentChecked.Contains(item.Id));
             }
+
             SetStatus($"Tìm thấy {_clbSidebarDevices.Items.Count} thiết bị.");
         }
 
@@ -769,9 +991,31 @@ namespace ToolAdb
         private List<string> GetAdbDeviceIds() { try { var p = Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = "devices", UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true }); var o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Split('\n').Where(l => l.Contains("\tdevice")).Select(l => l.Split('\t')[0]).ToList(); } catch { return new List<string>(); } }
         private void LoadDeviceNames() { _deviceNameById.Clear(); try { if (File.Exists("devices.json")) { var d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText("devices.json")); foreach (var k in d) _deviceNameById[k.Key] = k.Value; } } catch { } }
         private void SaveDeviceNames() { try { File.WriteAllText("devices.json", JsonSerializer.Serialize(_deviceNameById)); } catch { } }
-        private void SetStatus(string t) { if (InvokeRequired) Invoke(new Action(() => _lblStatusInfo.Text = t)); else _lblStatusInfo.Text = t; }
-        private void StartProgress() { if (InvokeRequired) Invoke(new Action(StartProgress)); else { _progressBar.Style = ProgressBarStyle.Marquee; _progressBar.Visible = true; } }
-        private void StopProgress() { if (InvokeRequired) Invoke(new Action(StopProgress)); else { _progressBar.Style = ProgressBarStyle.Blocks; _progressBar.Visible = false; } }
+
+
+        // --- CẬP NHẬT TRẠNG THÁI LÊN TIÊU ĐỀ CỬA SỔ ---
+
+        private void SetStatus(string t)
+        {
+            // Hiện thông báo lên tiêu đề cửa sổ thay vì Label
+            string title = $"ADB Pro v2.5 - [{t}]";
+            if (InvokeRequired) Invoke(new Action(() => this.Text = title));
+            else this.Text = title;
+        }
+
+        private void StartProgress()
+        {
+            // Đổi con trỏ chuột thành hình xoay xoay (Loading)
+            if (InvokeRequired) Invoke(new Action(StartProgress));
+            else this.Cursor = Cursors.WaitCursor;
+        }
+
+        private void StopProgress()
+        {
+            // Trả lại con trỏ chuột bình thường
+            if (InvokeRequired) Invoke(new Action(StopProgress));
+            else this.Cursor = Cursors.Default;
+        }
         private bool Confirm(string m) => MessageBox.Show(m, "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         #endregion
 
@@ -926,5 +1170,15 @@ namespace ToolAdb
             parent.Controls.Add(card);
         }
         #endregion
+    }
+    public class NaturalComparer : IComparer<string>
+    {
+        [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int StrCmpLogicalW(string psz1, string psz2);
+
+        public int Compare(string x, string y)
+        {
+            return StrCmpLogicalW(x ?? "", y ?? "");
+        }
     }
 }
