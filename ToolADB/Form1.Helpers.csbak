@@ -1,0 +1,37 @@
+using System.Drawing;
+using System.Windows.Forms;
+using Guna.UI2.WinForms;
+
+namespace ToolAdb
+{
+    // This file intentionally contains only helper UI factory methods
+    // to avoid touching designer-generated code.
+    public partial class Form1
+    {
+        /// <summary>
+        /// Creates a sidebar/dashboard button with consistent styling.
+        /// Fixes CS0103: CreateSideButton not found.
+        /// </summary>
+        private Guna2Button CreateSideButton(string text, Color fillColor)
+        {
+            var btn = new Guna2Button
+            {
+                Text = text,
+                FillColor = fillColor,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Height = 34,
+                BorderRadius = 8,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(6, 6, 6, 0),
+                Animated = true,
+            };
+
+            // Make it look good even if placed in containers with different backcolors
+            btn.HoverState.FillColor = ControlPaint.Light(fillColor, 0.15f);
+            btn.PressedColor = ControlPaint.Dark(fillColor, 0.15f);
+
+            return btn;
+        }
+    }
+}

@@ -1,0 +1,919 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Windows.Forms;
+using System.Linq;
+using System.Threading.Tasks;
+using System.IO.Compression;
+using System.Drawing;
+using System.Threading;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using Guna.UI2.WinForms;
+
+namespace ToolAdb
+{
+    public partial class Form1 : Form
+    {
+        // ==========================================
+        // 1. CẤU HÌNH & BIẾN
+        // ==========================================
+        private Dictionary<string, string> _deviceNameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private string BaseDir => AppDomain.CurrentDomain.BaseDirectory;
+        private string ApkDir => Path.Combine(BaseDir, "APK");
+        private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
+        private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
+        private string AdbPath => Path.Combine(BaseDir, "adb.exe");
+
+        // UI Controls (Null Forgiving)
+        private CheckedListBox _clbSidebarDevices = null!;
+        private Label _lblStatusInfo = null!;
+        private Guna2ProgressBar _progressBar = null!;
+
+        // Auto Refresh Timer
+        private System.Windows.Forms.Timer _deviceWatcherTimer = null!;
+        private string _lastDeviceHash = "";
+
+        // Tab Auto Login & 2FA
+        private TextBox _txtAccountInput = null!;
+        private TextBox _txtSecretInput = null!;
+        private Guna2DataGridView _grid2Fa = null!;
+        private System.Windows.Forms.Timer _totpTimer = null!;
+
+        // Account Manager Storage
+        private Guna2DataGridView _gridStorage = null!;
+        private Guna2DataGridView _gridUsed = null!;
+        private Guna2TabControl _tabStorage = null!;
+        private Label _lblStorageCount = null!;
+
+        // Tab Convert
+        private TextBox _txtConvertIn = null!;
+        private TextBox _txtConvertOut = null!;
+
+        public Form1()
+        {
+            InitializeComponent();
+            CheckForIllegalCrossThreadCalls = false;
+
+            BuildModernLayout();
+            ValidateAdbExists();
+            TryWarmAdbServer();
+            RefreshDeviceList();
+
+            // Timer 2FA (1s)
+            _totpTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _totpTimer.Tick += (s, e) => Update2FaGridCodes();
+            _totpTimer.Start();
+
+            // Timer Auto Detect Devices (3s)
+            _deviceWatcherTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _deviceWatcherTimer.Tick += DeviceWatcher_Tick;
+            _deviceWatcherTimer.Start();
+        }
+
+        // ==========================================
+        // 2. GIAO DIỆN CHÍNH
+        // ==========================================
+        private void BuildModernLayout()
+        {
+            this.Controls.Clear();
+            this.Size = new Size(1150, 750);
+            this.Text = "ADB Pro 2026 (Final Fixed Layout)";
+            this.BackColor = Color.FromArgb(243, 244, 246);
+            this.Font = new Font("Segoe UI", 9f);
+
+            var splitMain = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                FixedPanel = FixedPanel.Panel1,
+                SplitterDistance = 260,
+                IsSplitterFixed = true,
+                BackColor = Color.FromArgb(229, 231, 235)
+            };
+
+            // --- SIDEBAR ---
+            var pnlSidebar = splitMain.Panel1;
+            pnlSidebar.BackColor = Color.White;
+            pnlSidebar.Padding = new Padding(10);
+            var lblSideTitle = new Label { Text = "THIẾT BỊ KẾT NỐI", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 9f, FontStyle.Bold), ForeColor = Color.Gray };
+
+            _clbSidebarDevices = new CheckedListBox
+            {
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                CheckOnClick = true,
+                Font = new Font("Segoe UI", 10f),
+                IntegralHeight = false
+            };
+
+            var pnlSideBtns = new Panel { Dock = DockStyle.Bottom, Height = 140 };
+
+            var btnSelectAll = CreateSideButton("Chọn Tất Cả", Color.FromArgb(94, 148, 255));
+            btnSelectAll.Dock = DockStyle.Top;
+            btnSelectAll.Click += (s, e) => ToggleSidebarSelection(true);
+
+            var btnSelectNone = CreateSideButton("Bỏ Chọn", Color.FromArgb(148, 163, 184));
+            btnSelectNone.Dock = DockStyle.Top;
+            btnSelectNone.Click += (s, e) => ToggleSidebarSelection(false);
+
+            var btnRenameSide = CreateSideButton("Đổi tên thiết bị", Color.FromArgb(14, 165, 233));
+            btnRenameSide.Dock = DockStyle.Top;
+            btnRenameSide.Click += (s, e) => RenameSelectedDevice();
+
+            var btnRefreshSide = CreateSideButton("Làm mới (Refresh)", Color.FromArgb(16, 185, 129));
+            btnRefreshSide.Dock = DockStyle.Bottom;
+            btnRefreshSide.Click += (s, e) => RefreshDeviceList();
+
+            var pnlSpacer = new Panel { Dock = DockStyle.Fill };
+            pnlSideBtns.Controls.AddRange(new Control[] { pnlSpacer, btnRefreshSide, btnRenameSide, btnSelectNone, btnSelectAll });
+            pnlSidebar.Controls.AddRange(new Control[] { _clbSidebarDevices, pnlSideBtns, lblSideTitle });
+
+            // --- CONTENT ---
+            var pnlContent = splitMain.Panel2;
+            pnlContent.BackColor = Color.FromArgb(243, 244, 246);
+
+            var tabControl = new Guna2TabControl
+            {
+                Dock = DockStyle.Fill,
+                TabButtonIdleState = { FillColor = Color.Transparent, ForeColor = Color.Gray, Font = new Font("Segoe UI Semibold", 10f) },
+                TabButtonHoverState = { FillColor = Color.White, InnerColor = Color.White, ForeColor = Color.FromArgb(79, 70, 229) },
+                TabButtonSelectedState = { FillColor = Color.White, ForeColor = Color.FromArgb(79, 70, 229), InnerColor = Color.FromArgb(79, 70, 229) },
+                Alignment = TabAlignment.Top,
+                ItemSize = new Size(120, 40)
+            };
+
+            // TAB 1: DASHBOARD
+            var tabDash = new TabPage { Text = "Dashboard", BackColor = Color.FromArgb(248, 250, 252) };
+            var flowDash = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(15), FlowDirection = FlowDirection.LeftToRight };
+
+            var cardSetup = CreateGroupbox("Thiết lập & Cài đặt");
+            AddBtn(cardSetup, "Setup Android (All)", Color.FromArgb(16, 185, 129), async () => await ActionSetupAll());
+            AddBtn(cardSetup, "Cài File .APKM", Color.FromArgb(5, 150, 105), async () => await ActionInstallApkmFileDialog());
+            AddBtn(cardSetup, "Gửi File vào máy", Color.FromArgb(5, 150, 105), async () => await ActionPushFile());
+            AddBtn(cardSetup, "Mở Sync Settings", Color.FromArgb(219, 39, 119), async () => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS"));
+            ReflowCardCompact(cardSetup, Color.FromArgb(16, 185, 129), flowDash);
+
+            var cardApps = CreateGroupbox("Dọn dẹp & Ứng dụng");
+            AddBtn(cardApps, "Clear Chrome", Color.FromArgb(102, 153, 153), () => ActionRunAdbOnSelectedAsync("Clear Chrome", "shell pm clear com.android.chrome"));
+            AddBtn(cardApps, "Clear Play Store", Color.FromArgb(102, 153, 153), () => ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending"));
+            AddBtn(cardApps, "Clear Data Google", Color.FromArgb(255, 191, 0), () => {
+                ActionRunAdbOnSelectedAsync("Clear GMS", "shell pm clear com.google.android.gms");
+                ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending");
+            });
+            AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(220, 53, 69), async () => await ActionKillAllUserApps());
+            AddBtn(cardApps, "Đóng ChatGPT", Color.FromArgb(234, 88, 12), async () => await ActionRunAdbOnSelectedAsync("Stop ChatGPT", "shell am force-stop com.openai.chatgpt"));
+            AddBtn(cardApps, "Xóa Data ChatGPT", Color.FromArgb(51, 102, 255), async () => await ActionRunAdbOnSelectedAsync("Clear ChatGPT", "shell pm clear com.openai.chatgpt"));
+            ReflowCardCompact(cardApps, Color.FromArgb(14, 165, 233), flowDash);
+
+            var cardSystem = CreateGroupbox("Hệ thống & ADB");
+            AddBtn(cardSystem, "Set Automation IME", Color.FromArgb(168, 85, 247), () => {
+                var targets = GetTargetDevices();
+                if (targets.Count == 0) { SetStatus("No devices selected"); return; }
+                ForceSetAutomationIme(targets);
+                SetStatus($"Set IME OK: {targets.Count} device(s)");
+                MessageBox.Show("Đã set IME cho các máy đã chọn.");
+            });
+            AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), () => ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
+            AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), () => ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
+            AddBtn(cardSystem, "⚡ Restart ADB Server", Color.FromArgb(76, 29, 149), async () => await ActionRestartAdb());
+            AddBtn(cardSystem, "WIPE ALL DEVICE", Color.FromArgb(220, 38, 38), () => {
+                if (Confirm("CẢNH BÁO: WIPE SẠCH DỮ LIỆU TẤT CẢ MÁY?")) RunBat(@"bat\ResetMayAll.bat");
+            });
+            ReflowCardCompact(cardSystem, Color.FromArgb(124, 58, 237), flowDash);
+
+            tabDash.Controls.Add(flowDash);
+            tabControl.TabPages.Add(tabDash);
+
+            // TAB 2: AUTO LOGIN & 2FA
+            var tabLogin = new TabPage { Text = "Auto Login & 2FA", BackColor = Color.White };
+            BuildAutoLoginTab(tabLogin);
+            tabControl.TabPages.Add(tabLogin);
+
+            // TAB 3: CHUYỂN ĐỔI
+            var tabConvert = new TabPage { Text = "Công cụ Text", BackColor = Color.White };
+            BuildConvertTab(tabConvert);
+            tabControl.TabPages.Add(tabConvert);
+
+            pnlContent.Controls.Add(tabControl);
+
+            // Status Bar
+            var pnlStatus = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = Color.White };
+            _progressBar = new Guna2ProgressBar { Dock = DockStyle.Right, Width = 300, FillColor = Color.WhiteSmoke, ProgressColor = Color.FromArgb(16, 185, 129), ProgressColor2 = Color.FromArgb(59, 130, 246) };
+            _progressBar.Visible = false;
+            _lblStatusInfo = new Label { Text = "Ready", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(10, 0, 0, 0), ForeColor = Color.DimGray };
+            pnlStatus.Controls.Add(_lblStatusInfo);
+            pnlStatus.Controls.Add(_progressBar);
+
+            this.Controls.Add(splitMain);
+            this.Controls.Add(pnlStatus);
+        }
+
+        // ==========================================
+        // 3. LOGIC SETUP ANDROID
+        // ==========================================
+        private async Task ActionSetupAll()
+        {
+            var targets = GetAdbDeviceIds();
+            if (targets.Count == 0) { MessageBox.Show("Không tìm thấy thiết bị nào!"); return; }
+            if (!Confirm($"Bắt đầu Setup {targets.Count} máy (Batch 4)?")) return;
+
+            SetStatus("Starting Setup All...");
+            StartProgress();
+
+            await Task.Run(() => Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = 4 }, id =>
+            {
+                if (Directory.Exists(ApkDir))
+                {
+                    foreach (var f in Directory.GetFiles(ApkDir, "*.apk"))
+                        RunProcessWaitNoCapture(AdbPath, new[] { "-s", id, "install-multiple", "-i", "com.android.vending", f });
+                    foreach (var folder in Directory.GetDirectories(ApkDir, "*_apkm"))
+                        InstallSplitApksFromFolder(id, folder);
+                }
+
+                string cmdConfig = "settings put global device_provisioned 1; " +
+                                   "settings put secure --user 0 user_setup_complete 1; " +
+                                   "settings put global development_settings_enabled 1; " +
+                                   "settings put global stay_on_while_plugged_in 3; " +
+                                   "settings put secure ui_night_mode 1";
+                RunAdbWaitNoCapture(id, "shell", cmdConfig);
+
+                SetDpiTo411dp(id);
+
+                SetStatus($"Rebooting {id}...");
+                RunAdbWaitNoCapture(id, "reboot");
+            }));
+
+            StopProgress();
+            SetStatus("Setup Commands Sent!");
+            MessageBox.Show($"Đã gửi lệnh Setup + Reboot cho {targets.Count} thiết bị.");
+            RefreshDeviceList();
+        }
+
+        private void InstallSplitApksFromFolder(string deviceId, string folderPath)
+        {
+            try
+            {
+                if (!File.Exists(Path.Combine(folderPath, "base.apk"))) return;
+                var apkFiles = Directory.GetFiles(folderPath, "*.apk");
+                if (apkFiles.Length == 0) return;
+                var args = new List<string> { "-s", deviceId, "install-multiple", "-i", "com.android.vending" };
+                args.AddRange(apkFiles);
+                RunProcessWaitNoCapture(AdbPath, args);
+            }
+            catch { }
+        }
+
+        private void SetDpiTo411dp(string deviceId)
+        {
+            try
+            {
+                string output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell wm size");
+                var match = Regex.Match(output, @"Physical size:\s*(\d+)x(\d+)");
+                if (match.Success)
+                {
+                    int w = int.Parse(match.Groups[1].Value);
+                    int h = int.Parse(match.Groups[2].Value);
+                    int minPx = Math.Min(w, h);
+                    int targetDpi = (int)Math.Round(minPx * 160.0 / 411.0);
+                    RunAdbWaitNoCapture(deviceId, "shell", "wm", "density", targetDpi.ToString());
+                }
+            }
+            catch { }
+        }
+
+        // ==========================================
+        // 4. AUTO REFRESH
+        // ==========================================
+        private void DeviceWatcher_Tick(object sender, EventArgs e)
+        {
+            Task.Run(() => {
+                var currentIds = GetAdbDeviceIds();
+                currentIds.Sort();
+                string currentHash = string.Join(",", currentIds);
+                if (currentHash != _lastDeviceHash)
+                {
+                    _lastDeviceHash = currentHash;
+                    Invoke(new Action(() => {
+                        RefreshDeviceList();
+                        SetStatus($"Devices updated: {currentIds.Count} found.");
+                    }));
+                }
+            });
+        }
+
+        // ==========================================
+        // 5. AUTO LOGIN (FIX LAYOUT + BUTTON + HIGHLIGHT)
+        // ==========================================
+        private void BuildAutoLoginTab(TabPage page)
+        {
+            var splitMain = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 5,
+                BackColor = Color.FromArgb(241, 245, 249)
+            };
+            splitMain.HandleCreated += (s, e) => {
+                if (splitMain.Width > 0) splitMain.SplitterDistance = (int)(splitMain.Width * 0.6);
+            };
+
+            var pnlLeftContainer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0) };
+            var splitLeft = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterDistance = 400,
+                BackColor = Color.FromArgb(229, 231, 235)
+            };
+
+            // 1. STORAGE
+            var pnlStorage = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(5) };
+            _tabStorage = new Guna2TabControl
+            {
+                Dock = DockStyle.Fill,
+                ItemSize = new Size(100, 30),
+                // ▼▼▼ YÊU CẦU 1: CHUYỂN TAB XUỐNG DƯỚI CÙNG ▼▼▼
+                Alignment = TabAlignment.Bottom
+            };
+
+            var tabNewAcc = new TabPage { Text = "Kho", BackColor = Color.White };
+            _gridStorage = CreateEditableAccountGrid(true);
+
+            // ACTION BAR
+            var pnlStoreAction = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 45,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(0, 5, 0, 0),
+                // ▼▼▼ YÊU CẦU 2: SỬA LỖI MẤT NÚT ▼▼▼
+                WrapContents = false, // Không cho xuống dòng
+                AutoScroll = true     // Nếu thiếu chỗ thì hiện thanh cuộn
+            };
+
+            var btnLoadAcc = new Guna2Button { Text = "Reload", Height = 35, Width = 70, FillColor = Color.Gray };
+            btnLoadAcc.Click += (s, e) => LoadAccountsToGrid();
+
+            var btnImportClipboard = new Guna2Button { Text = "➕ Paste", Height = 35, Width = 80, FillColor = Color.SeaGreen };
+            btnImportClipboard.Click += (s, e) => ActionPasteImportToStorage();
+
+            _lblStorageCount = new Label
+            {
+                Text = "Còn: 0",
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                ForeColor = Color.DarkSlateGray,
+                Padding = new Padding(5, 10, 5, 0)
+            };
+
+            var btnPushToInput = new Guna2Button { Text = "Chuyển sang Input ▼", Width = 110, Height = 35, FillColor = Color.FromArgb(14, 165, 233) };
+            btnPushToInput.Click += (s, e) => TransferAccountsToInput();
+
+            var numPush = new Guna2NumericUpDown { Value = 1, Minimum = 1, Maximum = 1000, Width = 60, Height = 35 };
+
+            pnlStoreAction.Controls.Add(btnLoadAcc);
+            pnlStoreAction.Controls.Add(btnImportClipboard);
+            pnlStoreAction.Controls.Add(_lblStorageCount);
+            pnlStoreAction.Controls.Add(new Label { Text = "SL:", TextAlign = ContentAlignment.MiddleRight, AutoSize = true, Padding = new Padding(0, 10, 0, 0) });
+            pnlStoreAction.Controls.Add(numPush);
+            pnlStoreAction.Controls.Add(btnPushToInput);
+
+            tabNewAcc.Controls.Add(_gridStorage);
+            tabNewAcc.Controls.Add(pnlStoreAction);
+
+            var tabUsedAcc = new TabPage { Text = "Đã dùng", BackColor = Color.WhiteSmoke };
+            _gridUsed = CreateEditableAccountGrid(false);
+            tabUsedAcc.Controls.Add(_gridUsed);
+
+            _tabStorage.TabPages.Add(tabNewAcc);
+            _tabStorage.TabPages.Add(tabUsedAcc);
+            pnlStorage.Controls.Add(_tabStorage);
+
+            // 2. INPUT AREA
+            var pnlInput = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(10) };
+            _txtAccountInput = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), PlaceholderText = "Input..." };
+            var pnlInputBtns = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+            var btnRunEmail = new Guna2Button { Text = "Gõ Email", Width = 100, Dock = DockStyle.Left, FillColor = Color.Teal };
+            btnRunEmail.Click += async (s, e) => await ActionSendEmailAsync();
+            var btnRunPass = new Guna2Button { Text = "Gõ Pass", Width = 100, Dock = DockStyle.Right, FillColor = Color.OrangeRed };
+            btnRunPass.Click += async (s, e) => await ActionSendPassAsync();
+            pnlInputBtns.Controls.Add(btnRunEmail);
+            pnlInputBtns.Controls.Add(btnRunPass);
+
+            pnlInput.Controls.Add(_txtAccountInput);
+            pnlInput.Controls.Add(pnlInputBtns);
+            pnlInput.Controls.Add(new Label { Text = "Khu vực chạy Tool (Input)", Dock = DockStyle.Top, Font = new Font("Segoe UI", 9f, FontStyle.Bold), Height = 20 });
+
+            splitLeft.Panel1.Controls.Add(pnlStorage);
+            splitLeft.Panel2.Controls.Add(pnlInput);
+            pnlLeftContainer.Controls.Add(splitLeft);
+            splitMain.Panel1.Controls.Add(pnlLeftContainer);
+
+            // 3. RIGHT (2FA)
+            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10), BackColor = Color.White };
+            _txtSecretInput = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Top, Height = 100, Font = new Font("Consolas", 9f), PlaceholderText = "Secrets..." };
+            _txtSecretInput.TextChanged += (s, e) => ParseSecretsToGrid();
+
+            _grid2Fa = new Guna2DataGridView
+            {
+                Dock = DockStyle.Fill,
+                BackgroundColor = Color.White,
+                AllowUserToAddRows = false,
+                RowHeadersVisible = false,
+                ReadOnly = true,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Default,
+                ColumnHeadersHeight = 35,
+                RowTemplate = { Height = 30 }
+            };
+            _grid2Fa.Columns.Add("idx", "#"); _grid2Fa.Columns[0].Width = 35;
+            _grid2Fa.Columns.Add("code", "CODE");
+            _grid2Fa.Columns[1].DefaultCellStyle.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
+            _grid2Fa.Columns[1].DefaultCellStyle.ForeColor = Color.Teal;
+
+            var btnColCopy = new DataGridViewButtonColumn { Text = "Copy", UseColumnTextForButtonValue = true, HeaderText = "", FillWeight = 40 };
+            _grid2Fa.Columns.Add(btnColCopy);
+            var btnColSend = new DataGridViewButtonColumn { Text = "Gửi", UseColumnTextForButtonValue = true, HeaderText = "", FillWeight = 40 };
+            _grid2Fa.Columns.Add(btnColSend);
+            _grid2Fa.CellContentClick += Grid2Fa_CellContentClick;
+
+            var btnSendAll2Fa = new Guna2Button { Text = "Gửi 2FA All Devices", Height = 35, Dock = DockStyle.Bottom, FillColor = Color.FromArgb(124, 58, 237) };
+            btnSendAll2Fa.Click += async (s, e) => await ActionSend2FaToAll();
+
+            pnlRight.Controls.Add(_grid2Fa);
+            pnlRight.Controls.Add(new Panel { Height = 10, Dock = DockStyle.Top });
+            pnlRight.Controls.Add(_txtSecretInput);
+            pnlRight.Controls.Add(btnSendAll2Fa);
+            pnlRight.Controls.Add(new Label { Text = "Quản lý 2FA", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) });
+
+            splitMain.Panel2.Controls.Add(pnlRight);
+            page.Controls.Add(splitMain);
+
+            LoadAccountsToGrid();
+            LoadUsedAccountsToGrid();
+        }
+
+        private Guna2DataGridView CreateEditableAccountGrid(bool isEditable)
+        {
+            var g = new Guna2DataGridView
+            {
+                Dock = DockStyle.Fill,
+                BackgroundColor = Color.White,
+                AllowUserToAddRows = false,
+                RowHeadersVisible = false,
+                ReadOnly = !isEditable,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Light,
+                ColumnHeadersHeight = 30,
+                RowTemplate = { Height = 25 },
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true
+            };
+
+            var colEmail = new DataGridViewTextBoxColumn { HeaderText = "Email", Name = "email", SortMode = DataGridViewColumnSortMode.NotSortable };
+            var colPass = new DataGridViewTextBoxColumn { HeaderText = "Pass", Name = "pass", SortMode = DataGridViewColumnSortMode.NotSortable };
+
+            g.Columns.Add(colEmail);
+            g.Columns.Add(colPass);
+            g.Columns.Add(new DataGridViewButtonColumn { Text = "Usr", UseColumnTextForButtonValue = true, Width = 45, SortMode = DataGridViewColumnSortMode.NotSortable, ToolTipText = "Copy Email" });
+            g.Columns.Add(new DataGridViewButtonColumn { Text = "Pwd", UseColumnTextForButtonValue = true, Width = 45, SortMode = DataGridViewColumnSortMode.NotSortable, ToolTipText = "Copy Pass" });
+
+            if (isEditable)
+                g.Columns.Add(new DataGridViewButtonColumn { Text = "➔", UseColumnTextForButtonValue = true, Width = 40, HeaderText = "Mv", SortMode = DataGridViewColumnSortMode.NotSortable, ToolTipText = "Move to Used" });
+
+            g.CellContentClick += (s, e) => {
+                if (e.RowIndex < 0) return;
+
+                // ▼▼▼ YÊU CẦU 3: SỬA LỖI TÔ MÀU (THÊM SELECTION BACKCOLOR) ▼▼▼
+                if (e.ColumnIndex == 2)
+                {
+                    Clipboard.SetText(g.Rows[e.RowIndex].Cells[0].Value?.ToString() ?? "");
+                    var cell = g.Rows[e.RowIndex].Cells[0];
+                    cell.Style.BackColor = Color.FromArgb(220, 252, 231);
+                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
+                    SetStatus("Copied Email");
+                }
+                else if (e.ColumnIndex == 3)
+                {
+                    Clipboard.SetText(g.Rows[e.RowIndex].Cells[1].Value?.ToString() ?? "");
+                    var cell = g.Rows[e.RowIndex].Cells[1];
+                    cell.Style.BackColor = Color.FromArgb(220, 252, 231);
+                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
+                    SetStatus("Copied Pass");
+                }
+                else if (isEditable && e.ColumnIndex == 4) MoveSingleRowToUsed(e.RowIndex);
+            };
+
+            if (isEditable) g.CellEndEdit += (s, e) => SaveStorageFile();
+            return g;
+        }
+
+        private void ActionPasteImportToStorage()
+        {
+            string clip = "";
+            try { clip = Clipboard.GetText(); } catch { }
+            if (string.IsNullOrWhiteSpace(clip)) { MessageBox.Show("Clipboard trống!"); return; }
+
+            var lines = clip.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            int added = 0;
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var p = ParseLine(line);
+                if (!string.IsNullOrEmpty(p.email))
+                {
+                    _gridStorage.Rows.Add(p.email, p.pass);
+                    added++;
+                }
+            }
+
+            if (added > 0)
+            {
+                SaveStorageFile();
+                UpdateStorageCount();
+                MessageBox.Show($"Đã thêm {added} tài khoản vào kho!");
+            }
+        }
+
+        private void MoveSingleRowToUsed(int rowIndex)
+        {
+            try
+            {
+                var row = _gridStorage.Rows[rowIndex];
+                string e = row.Cells[0].Value?.ToString() ?? "";
+                string p = row.Cells[1].Value?.ToString() ?? "";
+
+                _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
+                File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}");
+
+                _gridStorage.Rows.RemoveAt(rowIndex);
+                SaveStorageFile();
+                UpdateStorageCount();
+                SetStatus("Đã chuyển 1 dòng sang Đã dùng.");
+            }
+            catch { }
+        }
+
+        private void LoadAccountsToGrid()
+        {
+            _gridStorage.Rows.Clear();
+            if (!File.Exists(AccountFile)) return;
+            var lines = File.ReadAllLines(AccountFile);
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var p = ParseLine(line);
+                if (!string.IsNullOrEmpty(p.email)) _gridStorage.Rows.Add(p.email, p.pass);
+            }
+            UpdateStorageCount();
+        }
+
+        private void LoadUsedAccountsToGrid()
+        {
+            _gridUsed.Rows.Clear();
+            if (!File.Exists(UsedAccountFile)) return;
+            var lines = File.ReadAllLines(UsedAccountFile);
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var p = ParseLine(line);
+                if (!string.IsNullOrEmpty(p.email)) _gridUsed.Rows.Add(p.email, p.pass);
+            }
+        }
+
+        private void SaveStorageFile()
+        {
+            var lines = new List<string>();
+            foreach (DataGridViewRow row in _gridStorage.Rows)
+            {
+                string e = row.Cells[0].Value?.ToString() ?? "";
+                string p = row.Cells[1].Value?.ToString() ?? "";
+                if (!string.IsNullOrWhiteSpace(e)) lines.Add($"{e}|{p}");
+            }
+            try { File.WriteAllText(AccountFile, string.Join(Environment.NewLine, lines)); } catch { }
+        }
+
+        // --- CẬP NHẬT BỘ ĐẾM VÀ TITLE ---
+        private void UpdateStorageCount()
+        {
+            int count = _gridStorage.Rows.Count;
+            if (_lblStorageCount != null) _lblStorageCount.Text = $"Còn: {count}";
+            if (_tabStorage != null && _tabStorage.TabPages.Count > 0)
+                _tabStorage.TabPages[0].Text = $"Kho ({count})";
+        }
+
+        private void TransferAccountsToInput()
+        {
+            var itemsToMove = new List<string>();
+            var rowsToRemove = new List<DataGridViewRow>();
+
+            if (_gridStorage.SelectedRows.Count > 0)
+            {
+                foreach (DataGridViewRow row in _gridStorage.SelectedRows)
+                {
+                    if (row.IsNewRow) continue;
+                    rowsToRemove.Add(row);
+                }
+                rowsToRemove.Reverse();
+            }
+            else
+            {
+                int count = 1;
+                foreach (Control c in _tabStorage.TabPages[0].Controls)
+                {
+                    if (c is FlowLayoutPanel flp)
+                    {
+                        foreach (Control sub in flp.Controls) if (sub is Guna2NumericUpDown nud) count = (int)nud.Value;
+                    }
+                }
+                for (int i = 0; i < count && i < _gridStorage.Rows.Count; i++) rowsToRemove.Add(_gridStorage.Rows[i]);
+            }
+
+            if (rowsToRemove.Count == 0) return;
+
+            foreach (var row in rowsToRemove)
+            {
+                string e = row.Cells[0].Value?.ToString() ?? "";
+                string p = row.Cells[1].Value?.ToString() ?? "";
+                itemsToMove.Add($"{e}|{p}");
+                _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
+                try { File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}"); } catch { }
+                _gridStorage.Rows.Remove(row);
+            }
+
+            SaveStorageFile();
+            UpdateStorageCount();
+
+            if (itemsToMove.Count > 0)
+            {
+                if (!string.IsNullOrWhiteSpace(_txtAccountInput.Text)) _txtAccountInput.AppendText(Environment.NewLine);
+                _txtAccountInput.AppendText(string.Join(Environment.NewLine, itemsToMove));
+            }
+            SetStatus($"Đã chuyển {itemsToMove.Count} tài khoản sang Input.");
+        }
+
+        // ==========================================
+        // 6. UTILITIES (ADB, UI, ETC)
+        // ==========================================
+        #region Utilities
+        private async Task ActionKillAllUserApps()
+        {
+            var targets = GetTargetDevices();
+            if (targets.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
+            SetStatus("Đang quét và tắt ứng dụng (user apps)..."); StartProgress();
+            await Task.Run(() => Parallel.ForEach(targets, deviceId =>
+            {
+                string output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell pm list packages -3 --user 0");
+                if (string.IsNullOrWhiteSpace(output)) output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell pm list packages -3");
+                if (!string.IsNullOrWhiteSpace(output))
+                {
+                    var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines)
+                    {
+                        var pkgLine = line.Trim();
+                        if (!pkgLine.StartsWith("package:", StringComparison.OrdinalIgnoreCase)) continue;
+                        string pkg = pkgLine.Substring("package:".Length).Trim();
+                        if (!string.IsNullOrWhiteSpace(pkg)) RunAdbWaitNoCapture(deviceId, "shell", "am", "force-stop", pkg);
+                    }
+                    RunAdbWaitNoCapture(deviceId, "shell", "am", "kill-all");
+                }
+                else RunAdbWaitNoCapture(deviceId, "shell", "am", "kill-all");
+            }));
+            StopProgress(); SetStatus("Đã đóng tất cả User Apps.");
+        }
+
+        private async Task ActionRestartAdb()
+        {
+            SetStatus("Killing ADB Server..."); StartProgress();
+            await Task.Run(() => {
+                RunProcessWaitNoCapture(AdbPath, new[] { "kill-server" });
+                Thread.Sleep(1500);
+                RunProcessWaitNoCapture(AdbPath, new[] { "start-server" });
+            });
+            StopProgress(); SetStatus("ADB Server Restarted."); RefreshDeviceList();
+            MessageBox.Show("ADB Server đã khởi động lại.");
+        }
+
+        private async Task ActionInstallApkmFileDialog()
+        {
+            var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
+            using var d = new OpenFileDialog { Filter = "APKM/ZIP|*.apkm;*.zip" };
+            if (d.ShowDialog() == DialogResult.OK)
+            {
+                StartProgress();
+                await Task.Run(() => Parallel.ForEach(t, id => InstallApkmZipLogic(id, d.FileName)));
+                StopProgress(); MessageBox.Show("Cài APKM xong.");
+            }
+        }
+
+        private void InstallApkmZipLogic(string id, string path)
+        {
+            var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            try
+            {
+                Directory.CreateDirectory(tmp); ZipFile.ExtractToDirectory(path, tmp);
+                var baseApk = Directory.GetFiles(tmp, "base.apk", SearchOption.AllDirectories).FirstOrDefault();
+                if (baseApk != null)
+                {
+                    var splits = Directory.GetFiles(tmp, "*.apk", SearchOption.AllDirectories).Where(x => !x.EndsWith("base.apk"));
+                    var args = new List<string> { "-s", id, "install-multiple", "-r", baseApk };
+                    args.AddRange(splits);
+                    RunProcessWaitNoCapture(AdbPath, args);
+                }
+            }
+            catch { }
+            finally { try { Directory.Delete(tmp, true); } catch { } }
+        }
+
+        private void RenameSelectedDevice() { var t = GetTargetDevices(); if (t.Count != 1) { MessageBox.Show("Chọn 1 máy thôi."); return; } var id = t[0]; _deviceNameById.TryGetValue(id, out var old); string inp = Microsoft.VisualBasic.Interaction.InputBox("Tên mới:", "Đổi tên", old ?? ""); if (!string.IsNullOrWhiteSpace(inp)) { _deviceNameById[id] = inp; SaveDeviceNames(); RefreshDeviceList(); } }
+        private async Task ActionPushFile() { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } using var d = new OpenFileDialog { Title = "Chọn file" }; if (d.ShowDialog() == DialogResult.OK) { StartProgress(); SetStatus($"Đang gửi file..."); await Task.Run(() => Parallel.ForEach(t, id => RunAdbWaitNoCapture(id, "push", d.FileName, "/sdcard/Download/"))); StopProgress(); MessageBox.Show("Gửi file xong."); } }
+        private async Task ActionRunAdbOnSelectedAsync(string name, string cmd) { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } SetStatus($"Running {name}..."); StartProgress(); await Task.Run(() => Parallel.ForEach(t, id => RunAdbNoWait($"-s {id} {cmd}"))); StopProgress(); SetStatus($"Done {name}"); }
+
+        private void RefreshDeviceList()
+        {
+            LoadDeviceNames();
+            var currentChecked = GetTargetDevices();
+            _clbSidebarDevices.Items.Clear();
+            foreach (var id in GetAdbDeviceIds())
+            {
+                _deviceNameById.TryGetValue(id, out var name);
+                string display = string.IsNullOrEmpty(name) ? id : $"{name} ({id})";
+                _clbSidebarDevices.Items.Add(display, currentChecked.Contains(id));
+            }
+            SetStatus($"Tìm thấy {_clbSidebarDevices.Items.Count} thiết bị.");
+        }
+
+        private void ToggleSidebarSelection(bool check) { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, check); }
+        private List<string> GetTargetDevices() { var list = new List<string>(); foreach (var item in _clbSidebarDevices.CheckedItems) { var s = item.ToString(); if (s.Contains("(") && s.EndsWith(")")) list.Add(s.Substring(s.LastIndexOf('(') + 1).Trim(')')); else list.Add(s); } return list; }
+        private void RunBat(string bat, string args = "") { var p = Path.Combine(BaseDir, bat); if (!File.Exists(p)) { MessageBox.Show("Missing: " + p); return; } Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"\"{p}\" {args}\"", UseShellExecute = false, CreateNoWindow = false, WorkingDirectory = BaseDir }); }
+
+        private void ValidateAdbExists() { if (!File.Exists(AdbPath)) MessageBox.Show("Thiếu adb.exe trong thư mục tool: " + AdbPath); }
+        private void TryWarmAdbServer() { try { RunAdbNoWait("start-server"); } catch { } }
+        private void RunAdbNoWait(string args) => Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = args, UseShellExecute = false, CreateNoWindow = true });
+        private int RunAdbWaitNoCapture(string id, params string[] args) { var l = new List<string> { "-s", id }; l.AddRange(args); return RunProcessWaitNoCapture(AdbPath, l); }
+        private string RunProcessReturnOutput(string exe, string args) { try { var p = new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 }; using var proc = Process.Start(p); string output = proc.StandardOutput.ReadToEnd(); proc.WaitForExit(); return output; } catch { return ""; } }
+        private int RunProcessWaitNoCapture(string f, IEnumerable<string> a, string w = null) { var p = new ProcessStartInfo { FileName = f, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = w ?? BaseDir }; foreach (var x in a) p.ArgumentList.Add(x); var proc = Process.Start(p); proc.WaitForExit(); return proc.ExitCode; }
+        private List<string> GetAdbDeviceIds() { try { var p = Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = "devices", UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true }); var o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Split('\n').Where(l => l.Contains("\tdevice")).Select(l => l.Split('\t')[0]).ToList(); } catch { return new List<string>(); } }
+        private void LoadDeviceNames() { _deviceNameById.Clear(); try { if (File.Exists("devices.json")) { var d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText("devices.json")); foreach (var k in d) _deviceNameById[k.Key] = k.Value; } } catch { } }
+        private void SaveDeviceNames() { try { File.WriteAllText("devices.json", JsonSerializer.Serialize(_deviceNameById)); } catch { } }
+        private void SetStatus(string t) { if (InvokeRequired) Invoke(new Action(() => _lblStatusInfo.Text = t)); else _lblStatusInfo.Text = t; }
+        private void StartProgress() { if (InvokeRequired) Invoke(new Action(StartProgress)); else { _progressBar.Style = ProgressBarStyle.Marquee; _progressBar.Visible = true; } }
+        private void StopProgress() { if (InvokeRequired) Invoke(new Action(StopProgress)); else { _progressBar.Style = ProgressBarStyle.Blocks; _progressBar.Visible = false; } }
+        private bool Confirm(string m) => MessageBox.Show(m, "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        #endregion
+
+        // ==========================================
+        // 7. INPUT & IME & 2FA
+        // ==========================================
+        #region InputLogic
+        private async Task ActionSendEmailAsync() => await SendText(true);
+        private async Task ActionSendPassAsync() => await SendText(false);
+        private async Task SendText(bool isEmail)
+        {
+            var t = GetTargetDevices(); var l = _txtAccountInput.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
+            if (l.Length == 0) { MessageBox.Show("Chưa có dữ liệu!"); return; }
+            StartProgress();
+            await Task.Run(() => Parallel.ForEach(t, (id, s, i) => {
+                if (i >= l.Length) return;
+                var p = ParseLine(l[i]); var txt = isEmail ? p.email : p.pass;
+                if (string.IsNullOrWhiteSpace(txt)) return;
+                EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(30); ImeSendText(id, txt.Trim());
+                Thread.Sleep(80); RunAdbWaitNoCapture(id, "shell", "input", "keyevent", "66");
+            }));
+            StopProgress();
+        }
+        private (string email, string pass) ParseLine(string l)
+        {
+            l = l.Trim();
+            var m = Regex.Match(l, @"[\w\.-]+@[\w\.-]+\.\w+");
+            if (m.Success)
+            {
+                string email = m.Value;
+                string rawRest = l.Replace(email, "").Trim();
+                string pass = Regex.Replace(rawRest, @"^[:|\s]+", "");
+                return (email, pass);
+            }
+            return (l, "");
+        }
+
+        private const string AutomationImeId = "com.cuong.automationime/.AutomationIME";
+        private const string AutomationImeReceiverComponent = "com.cuong.automationime/.B64Receiver";
+        private const string AutomationImeSendB64Action = "com.cuong.automationime.SEND_B64";
+        private const string AutomationImeClearAction = "com.cuong.automationime.CLEAR_TEXT";
+        private const string AutomationImeB64ExtraKey = "b64";
+        private readonly HashSet<string> _imeEnsured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _imeEnsuredLock = new object();
+        private bool IsAutomationImeActive(string deviceId) { var cur = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell settings get secure default_input_method"); return (cur ?? "").Trim().Equals(AutomationImeId, StringComparison.OrdinalIgnoreCase); }
+        private void EnsureAutomationIme(string deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId)) return;
+            lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId) && IsAutomationImeActive(deviceId)) return; }
+            RunAdbWaitNoCapture(deviceId, "shell", "ime", "enable", AutomationImeId); RunAdbWaitNoCapture(deviceId, "shell", "ime", "set", AutomationImeId);
+            lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
+        }
+        private void ForceSetAutomationIme(IEnumerable<string> deviceIds) { if (deviceIds == null) return; foreach (var id in deviceIds) { RunAdbWaitNoCapture(id, "shell", "ime", "enable", AutomationImeId); RunAdbWaitNoCapture(id, "shell", "ime", "set", AutomationImeId); lock (_imeEnsuredLock) _imeEnsured.Add(id); } }
+        private void ImeClearText(string deviceId) => RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
+        private void ImeSendText(string deviceId, string text) { var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? "")); RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64); }
+
+        private void ParseSecretsToGrid() { _grid2Fa.Rows.Clear(); var l = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries); int i = 1; foreach (var s in l) _grid2Fa.Rows.Add(i++, "Calc...", "Copy", "Gửi"); Update2FaGridCodes(); }
+        private void Update2FaGridCodes() { if (_grid2Fa == null) return; var l = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries); for (int i = 0; i < _grid2Fa.Rows.Count; i++) { if (i >= l.Length) break; try { _grid2Fa.Rows[i].Cells[1].Value = $"{ComputeTotp6(l[i].Trim())} ({GetTotpRemainingSeconds()}s)"; } catch { _grid2Fa.Rows[i].Cells[1].Value = "Error"; } } }
+        private void Grid2Fa_CellContentClick(object s, DataGridViewCellEventArgs e) { if (e.RowIndex < 0) return; var c = _grid2Fa.Rows[e.RowIndex].Cells[1].Value?.ToString()?.Split(' ')[0]; if (string.IsNullOrEmpty(c) || c == "Error") return; if (e.ColumnIndex == 2) { Clipboard.SetText(c); SetStatus("Copied 2FA"); } else if (e.ColumnIndex == 3) { Send2FaSingle(e.RowIndex, c); } }
+        private void Send2FaSingle(int rowIndex, string code) { var t = GetTargetDevices(); if (rowIndex < t.Count) { var id = t[rowIndex]; EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(20); ImeSendText(id, code); } else SetStatus("Không đủ thiết bị để gửi dòng này"); }
+        private async Task ActionSend2FaToAll() { var targets = GetTargetDevices(); if (targets.Count == 0) { MessageBox.Show("Chưa chọn thiết bị"); return; } SetStatus("Sending 2FA to all..."); await Task.Run(() => Parallel.For(0, targets.Count, i => { string code = ""; if (i < _grid2Fa.Rows.Count) { var val = _grid2Fa.Rows[i].Cells[1].Value?.ToString(); if (val != null && val.Contains(" ")) code = val.Split(' ')[0]; } if (!string.IsNullOrEmpty(code) && code != "Error") { var id = targets[i]; EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(20); ImeSendText(id, code); } })); StopProgress(); SetStatus("Sent 2FA Done."); }
+        private static string ComputeTotp6(string secretKey) { try { if (string.IsNullOrWhiteSpace(secretKey)) return "ERR"; secretKey = Regex.Replace(secretKey.Trim().ToUpperInvariant(), @"[^A-Z2-7=]", ""); byte[] keyBytes = Base32DecodeRfc4648(secretKey); if (keyBytes == null || keyBytes.Length == 0) return "ERR"; long counter = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30; byte[] counterBytes = BitConverter.GetBytes(System.Net.IPAddress.HostToNetworkOrder(counter)); using var hmac = new HMACSHA1(keyBytes); byte[] hash = hmac.ComputeHash(counterBytes); int offset = hash[hash.Length - 1] & 0x0F; int binary = ((hash[offset] & 0x7F) << 24) | ((hash[offset + 1] & 0xFF) << 16) | ((hash[offset + 2] & 0xFF) << 8) | (hash[offset + 3] & 0xFF); return (binary % 1_000_000).ToString("D6"); } catch { return "ERR"; } }
+        private static int GetTotpRemainingSeconds() => 30 - (int)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() % 30);
+        private static byte[] Base32DecodeRfc4648(string input) { input = input.TrimEnd('='); var result = new List<byte>(); int buffer = 0; int bitsLeft = 0; foreach (char c in input) { int val = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".IndexOf(c); if (val < 0) continue; buffer = (buffer << 5) | val; bitsLeft += 5; if (bitsLeft >= 8) { bitsLeft -= 8; result.Add((byte)((buffer >> bitsLeft) & 0xFF)); } } return result.ToArray(); }
+        #endregion
+
+        // ==========================================
+        // 8. HELPERS (UI COMPONENTS)
+        // ==========================================
+        #region Helpers
+        private void BuildConvertTab(TabPage page)
+        {
+            var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 400, SplitterWidth = 35, BackColor = Color.FromArgb(241, 245, 249) };
+            double? userRatio = null; bool userDragging = false;
+            split.SplitterMoving += (s, e) => userDragging = true;
+            split.SplitterMoved += (s, e) => { userDragging = false; var w = split.ClientSize.Width; if (w > 0) userRatio = split.SplitterDistance / (double)w; };
+            split.SizeChanged += (s, e) => { if (userDragging) return; if (userRatio == null) return; var w = split.ClientSize.Width; if (w <= 0) return; var d = (int)(w * userRatio.Value); split.SplitterDistance = Math.Max(0, Math.Min(d, w)); };
+
+            var pnlLeft = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15), BackColor = Color.White };
+            _txtConvertIn = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), PlaceholderText = "Mỗi record 3 dòng:\r\nemail\r\npassword\r\n2fa_secret\r\n..." };
+            pnlLeft.Controls.Add(_txtConvertIn); pnlLeft.Controls.Add(new Label { Text = "Input (3 dòng = 1 record)", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft });
+            split.Panel1.Controls.Add(pnlLeft);
+
+            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15), BackColor = Color.White };
+            _txtConvertOut = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BackColor = SystemColors.Window, Cursor = Cursors.Hand };
+            _txtConvertOut.Click += (s, e) => { if (!string.IsNullOrWhiteSpace(_txtConvertOut.Text)) { Clipboard.SetText(_txtConvertOut.Text); SetStatus("Copied output"); } };
+            var btnConvert = new Guna2Button { Text = "Chuyển đổi", Height = 36, Width = 120, FillColor = Color.FromArgb(14, 165, 233), BorderRadius = 4 };
+            btnConvert.Click += (s, e) => {
+                var lines = (_txtConvertIn.Text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+                if (lines.Count == 0) { _txtConvertOut.Text = ""; return; }
+                var outLines = new List<string>();
+                for (int i = 0; i + 2 < lines.Count; i += 3) outLines.Add($"{lines[i]}\t{lines[i + 1]}\t{lines[i + 2]}");
+                _txtConvertOut.Text = string.Join(Environment.NewLine, outLines);
+                SetStatus($"Đã chuyển đổi {outLines.Count} dòng.");
+            };
+            var btnCopy = new Guna2Button { Text = "Copy", Height = 36, Width = 130, FillColor = Color.FromArgb(34, 197, 94), BorderRadius = 4 };
+            btnCopy.Click += (s, e) => { if (!string.IsNullOrWhiteSpace(_txtConvertOut.Text)) { Clipboard.SetText(_txtConvertOut.Text); SetStatus("Copied output"); } };
+            var pnlBtns = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+            pnlBtns.Controls.AddRange(new Control[] { btnConvert, btnCopy });
+            pnlRight.Controls.AddRange(new Control[] { _txtConvertOut, new Panel { Height = 10, Dock = DockStyle.Top }, pnlBtns, new Label { Text = "Output (TAB-separated)", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) } });
+            split.Panel2.Controls.Add(pnlRight);
+            page.Controls.Add(split);
+        }
+
+        private Guna2Button CreateSideButton(string text, Color color)
+        {
+            return new Guna2Button
+            {
+                Text = text,
+                Height = 35,
+                BorderRadius = 4,
+                FillColor = color,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI Semibold", 9f),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 5, 0, 5)
+            };
+        }
+
+        private Guna2GroupBox CreateGroupbox(string title)
+        {
+            return new Guna2GroupBox
+            {
+                Text = title,
+                Size = new Size(340, 100)
+            };
+        }
+
+        private void AddBtn(Guna2GroupBox group, string text, Color color, Action onClick)
+        {
+            var btn = new Guna2Button
+            {
+                Text = text,
+                FillColor = color,
+                ForeColor = Color.White
+            };
+            btn.Click += (s, e) => onClick();
+            group.Controls.Add(btn);
+        }
+
+        private void ReflowCardCompact(Guna2GroupBox card, Color themeColor, FlowLayoutPanel parent)
+        {
+            card.Font = new Font("Segoe UI Semibold", 9.5f); card.ForeColor = Color.Black;
+            card.CustomBorderColor = Color.FromArgb(229, 231, 235); card.CustomBorderThickness = new Padding(0, 35, 0, 0);
+            card.FillColor = Color.White; card.BorderColor = Color.FromArgb(229, 231, 235); card.BorderRadius = 6;
+            card.Width = 340; card.Margin = new Padding(8);
+            var buttons = card.Controls.OfType<Guna2Button>().ToList();
+            int startY = 45, gap = 8, colWidth = (card.Width - 20 - gap) / 2;
+            for (int i = 0; i < buttons.Count; i++) { var btn = buttons[i]; btn.Height = 36; btn.BorderRadius = 4; btn.Font = new Font("Segoe UI", 9f); if (btn.FillColor == Color.FromArgb(94, 148, 255)) btn.FillColor = themeColor; btn.Location = new Point(10 + (i % 2) * (colWidth + gap), startY + (i / 2) * (36 + gap)); btn.Width = colWidth; }
+            card.Height = startY + (int)Math.Ceiling(buttons.Count / 2.0) * (36 + gap) + 10;
+            parent.Controls.Add(card);
+        }
+        #endregion
+    }
+}
