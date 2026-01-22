@@ -27,7 +27,7 @@ namespace ToolAdb
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
         private string AdbPath => Path.Combine(BaseDir, "adb.exe");
         private object _saveLock = new object();
-
+        private System.Windows.Forms.Timer _inputScanTimer = null!;
 
         // UI Controls (Null Forgiving)
         private CheckedListBox _clbSidebarDevices = null!;
@@ -84,6 +84,9 @@ namespace ToolAdb
             _deviceWatcherTimer = new System.Windows.Forms.Timer { Interval = 3000 };
             _deviceWatcherTimer.Tick += DeviceWatcher_Tick;
             _deviceWatcherTimer.Start();
+            // Timer quét Input (Delay 500ms để không làm phiền khi đang gõ)
+            _inputScanTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            _inputScanTimer.Tick += (s, e) => ScanInputFor2Fa();
         }
 
         // ==========================================
@@ -502,8 +505,10 @@ namespace ToolAdb
                 ScrollBars = ScrollBars.Vertical,
                 Dock = DockStyle.Fill,
                 Font = new Font("Consolas", 9.5f),
-                PlaceholderText = "Nhập list mail|pass..."
+                PlaceholderText = "Nhập list mail|pass|2fa..."
             };
+            // Mỗi khi nội dung thay đổi, reset timer (đợi 500ms mới chạy)
+            _txtAccountInput.TextChanged += (s, e) => { _inputScanTimer.Stop(); _inputScanTimer.Start(); };
 
             // --- 3. Panel Nút bấm ---
             var pnlInputBtns = new TableLayoutPanel
@@ -1229,6 +1234,77 @@ namespace ToolAdb
                     try { File.WriteAllText(AccountFile, string.Join(Environment.NewLine, lines)); } catch { }
                 }
             });
+        }
+        private void ScanInputFor2Fa()
+        {
+            _inputScanTimer.Stop(); // Dừng timer
+
+            if (string.IsNullOrWhiteSpace(_txtAccountInput.Text)) return;
+
+            var lines = _txtAccountInput.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            var newAccountLines = new List<string>();
+            var newSecretLines = new List<string>();
+            bool hasChange = false;
+
+            foreach (var line in lines)
+            {
+                string l = line.Trim();
+                string[] parts = null;
+
+                // Ưu tiên 1: Tách bằng dấu gạch đứng | (Chuẩn nhất)
+                if (l.Contains("|"))
+                {
+                    parts = l.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+                }
+                // Ưu tiên 2: Tách bằng Tab (Google Sheets) HOẶC Dấu cách
+                // Code cũ bị lỗi vì chỉ check Contains(" ") mà quên check Tab
+                else
+                {
+                    // Cắt bằng cả Tab (\t) và Space (' ')
+                    parts = l.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                }
+
+                // Logic xử lý: Nếu phát hiện đủ 3 thành phần (User, Pass, 2FA)
+                if (parts != null && parts.Length >= 3)
+                {
+                    // Ghép User|Pass giữ lại bên này
+                    newAccountLines.Add($"{parts[0].Trim()}|{parts[1].Trim()}");
+
+                    // Lấy phần thứ 3 (2FA) đẩy sang bên kia
+                    string secret = parts[2].Trim();
+                    // Nếu bị cắt vụn quá (ví dụ secret có dấu cách) thì nối lại
+                    if (parts.Length > 3) secret = string.Join("", parts.Skip(2));
+
+                    newSecretLines.Add(secret);
+                    hasChange = true;
+                }
+                else
+                {
+                    // Nếu không đủ 3 phần thì giữ nguyên dòng đó
+                    newAccountLines.Add(l);
+                }
+            }
+
+            // Chỉ cập nhật giao diện nếu CÓ sự thay đổi
+            if (hasChange && newSecretLines.Count > 0)
+            {
+                // 1. Cập nhật lại ô Account (đã bị cắt mất 2FA)
+                // Dùng SuspendLayout để tránh nháy
+                _txtAccountInput.SuspendLayout();
+                int oldSelection = _txtAccountInput.SelectionStart;
+                _txtAccountInput.Text = string.Join(Environment.NewLine, newAccountLines);
+                try { _txtAccountInput.SelectionStart = Math.Min(oldSelection, _txtAccountInput.TextLength); } catch { }
+                _txtAccountInput.ResumeLayout();
+
+                // 2. Đẩy 2FA sang ô Secret
+                if (!string.IsNullOrWhiteSpace(_txtSecretInput.Text))
+                    _txtSecretInput.AppendText(Environment.NewLine);
+
+                _txtSecretInput.AppendText(string.Join(Environment.NewLine, newSecretLines));
+
+                // Thông báo
+                SetStatus($"Đã tách {newSecretLines.Count} mã 2FA từ Google Sheet/Text.");
+            }
         }
     }
     public class NaturalComparer : IComparer<string>

@@ -26,6 +26,8 @@ namespace ToolAdb
         private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
         private string AdbPath => Path.Combine(BaseDir, "adb.exe");
+        private object _saveLock = new object();
+
 
         // UI Controls (Null Forgiving)
         private CheckedListBox _clbSidebarDevices = null!;
@@ -108,7 +110,7 @@ namespace ToolAdb
             var pnlSidebar = splitMain.Panel1;
             pnlSidebar.BackColor = Color.White;
             pnlSidebar.Padding = new Padding(10);
-            var lblSideTitle = new Label { Text = "THIẾT BỊ", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 9f, FontStyle.Bold), ForeColor = Color.Green };
+            var lblSideTitle = new Label { Text = "Thhiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
 
             _clbSidebarDevices = new CheckedListBox
             {
@@ -161,22 +163,39 @@ namespace ToolAdb
 
             var cardSetup = CreateGroupbox("Thiết lập & Cài đặt");
             AddBtn(cardSetup, "Setup Android (All)", Color.FromArgb(16, 185, 129), async () => await ActionSetupAll());
-            AddBtn(cardSetup, "Cài File .APKM", Color.FromArgb(5, 150, 105), async () => await ActionInstallApkmFileDialog());
-            AddBtn(cardSetup, "Gửi File vào máy", Color.FromArgb(5, 150, 105), async () => await ActionPushFile());
+            AddBtn(cardSetup, "Cài File .APKM", Color.FromArgb(16, 185, 129), async () => await ActionInstallApkmFileDialog());
+            AddBtn(cardSetup, "Gửi File vào máy", Color.FromArgb(16, 185, 129), async () => await ActionPushFile());
             AddBtn(cardSetup, "Mở Sync Settings", Color.FromArgb(219, 39, 119), async () => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS"));
             ReflowCardCompact(cardSetup, Color.FromArgb(16, 185, 129), flowDash);
 
+            // --- CARD 2: DỌN DẸP (Tông Cam/Vàng & Đỏ) ---
             var cardApps = CreateGroupbox("Dọn dẹp & Ứng dụng");
-            AddBtn(cardApps, "Clear Chrome", Color.FromArgb(102, 153, 153), () => ActionRunAdbOnSelectedAsync("Clear Chrome", "shell pm clear com.android.chrome"));
-            AddBtn(cardApps, "Clear Play Store", Color.FromArgb(102, 153, 153), () => ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending"));
-            AddBtn(cardApps, "Clear Data Google", Color.FromArgb(255, 191, 0), () => {
+
+            // ... (Các nút Clear Chrome, Store, Google giữ nguyên) ...
+            AddBtn(cardApps, "Clear Chrome", Color.FromArgb(245, 158, 11), () => ActionRunAdbOnSelectedAsync("Clear Chrome", "shell pm clear com.android.chrome"));
+            AddBtn(cardApps, "Clear Play Store", Color.FromArgb(249, 115, 22), () => ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending"));
+            AddBtn(cardApps, "Clear Data Google", Color.FromArgb(220, 38, 38), () => {
                 ActionRunAdbOnSelectedAsync("Clear GMS", "shell pm clear com.google.android.gms");
                 ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending");
             });
-            AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(220, 53, 69), async () => await ActionKillAllUserApps());
-            AddBtn(cardApps, "Đóng ChatGPT", Color.FromArgb(234, 88, 12), async () => await ActionRunAdbOnSelectedAsync("Stop ChatGPT", "shell am force-stop com.openai.chatgpt"));
-            AddBtn(cardApps, "Xóa Data ChatGPT", Color.FromArgb(51, 102, 255), async () => await ActionRunAdbOnSelectedAsync("Clear ChatGPT", "shell pm clear com.openai.chatgpt"));
-            ReflowCardCompact(cardApps, Color.FromArgb(14, 165, 233), flowDash);
+            AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(100, 116, 139), async () => await ActionKillAllUserApps());
+
+            // --- KHU VỰC CHATGPT ---
+
+            // 1. Mở ChatGPT (Mới thêm) - Màu Xanh Lá
+            AddBtn(cardApps, "Mở ChatGPT", Color.FromArgb(34, 197, 94), async () =>
+                await ActionRunAdbOnSelectedAsync("Open ChatGPT", "shell monkey -p com.openai.chatgpt -c android.intent.category.LAUNCHER 1"));
+
+            // 2. Đóng ChatGPT - Màu Xanh Cổ Vịt
+            AddBtn(cardApps, "Đóng ChatGPT", Color.FromArgb(20, 184, 166), async () =>
+                await ActionRunAdbOnSelectedAsync("Stop ChatGPT", "shell am force-stop com.openai.chatgpt"));
+
+            // 3. Xóa Data - Màu Xanh Cyan
+            AddBtn(cardApps, "Xóa Data ChatGPT", Color.FromArgb(30, 144, 255), async () =>
+                await ActionRunAdbOnSelectedAsync("Clear ChatGPT", "shell pm clear com.openai.chatgpt"));
+
+            // Reflow lại giao diện
+            ReflowCardCompact(cardApps, Color.FromArgb(249, 115, 22), flowDash);
 
             var cardSystem = CreateGroupbox("Hệ thống & ADB");
             AddBtn(cardSystem, "Set Automation IME", Color.FromArgb(168, 85, 247), () => {
@@ -188,7 +207,7 @@ namespace ToolAdb
             });
             AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), () => ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
             AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), () => ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
-            AddBtn(cardSystem, "⚡ Restart ADB Server", Color.FromArgb(76, 29, 149), async () => await ActionRestartAdb());
+            AddBtn(cardSystem, "⚡ Restart ADB Server", Color.FromArgb(71, 85, 105), async () => await ActionRestartAdb());
             AddBtn(cardSystem, "WIPE ALL DEVICE", Color.FromArgb(220, 38, 38), () => {
                 if (Confirm("CẢNH BÁO: WIPE SẠCH DỮ LIỆU TẤT CẢ MÁY?")) RunBat(@"bat\ResetMayAll.bat");
             });
@@ -309,7 +328,7 @@ namespace ToolAdb
                     _lastDeviceHash = currentHash;
                     Invoke(new Action(() => {
                         RefreshDeviceList();
-                        SetStatus($"Devices updated: {currentIds.Count} found.");
+                        SetStatus($"Tìm Thấy: {currentIds.Count} Tổng.");
                     }));
                 }
             });
@@ -353,80 +372,84 @@ namespace ToolAdb
             var tabNewAcc = new TabPage { Text = "Kho", BackColor = Color.White };
             _gridStorage = CreateEditableAccountGrid(true);
 
-            // --- ACTION BAR (PHIÊN BẢN COMPACT) ---
+            // --- ACTION BAR (PHIÊN BẢN COMPACT & ĐÃ FIX LỖI) ---
             var pnlStoreAction = new FlowLayoutPanel
             {
                 Dock = DockStyle.Bottom,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(1), // Padding siêu nhỏ
-                WrapContents = true
+                Padding = new Padding(2), // Padding nhỏ để các nút không dính sát viền
+                WrapContents = false      // QUAN TRỌNG: Chống xuống dòng lung tung
             };
 
-            // Định nghĩa Style nhỏ gọn
-            int compactH = 28; // Chiều cao nút giảm xuống 28
-            var compactFont = new Font("Segoe UI", 8.25f, FontStyle.Regular);
+            // --- CẤU HÌNH STYLE NHỎ GỌN ---
+            int compactH = 28; // Chiều cao giữ nguyên hoặc giảm xuống 26 nếu muốn bé hơn nữa
+            var iconFont = new Font("Segoe UI", 11.5f, FontStyle.Bold); // Font icon vừa vặn
+            var compactMargin = new Padding(1); // Khoảng cách giữa các nút siêu nhỏ (1px)
 
+            // 1. Nút Nạp (Refresh) - Thu nhỏ tối đa
             var btnLoadAcc = new Guna2Button
             {
-                Text = "Nạp",
+                Text = "🔄",
                 Height = compactH,
-                Width = 50, // Nút bé lại
-                FillColor = Color.Gray,
-                Font = compactFont
+                Width = 38, // Giảm từ 50 -> 38 (vừa khít icon)
+                FillColor = Color.DimGray,
+                Font = iconFont,
+                Margin = compactMargin,
+                TextOffset = new Point(0, -1) // Căn chỉnh icon cho giữa
             };
             btnLoadAcc.Click += (s, e) => LoadAccountsToGrid();
 
+            // 2. Nút Paste (Thêm) - Thu nhỏ
             var btnImportClipboard = new Guna2Button
             {
-                Text = "➕ Thêm",
+                Text = "➕",
                 Height = compactH,
-                Width = 60,
+                Width = 38, // Giảm từ 60 -> 38
                 FillColor = Color.SeaGreen,
-                Font = compactFont
+                Font = iconFont,
+                Margin = compactMargin,
+                TextOffset = new Point(0, -1)
             };
             btnImportClipboard.Click += (s, e) => ActionPasteImportToStorage();
 
+            // 3. Label đếm - TO, RÕ RÀNG, DỄ NHÌN
             _lblStorageCount = new Label
             {
-                Text = "0", // Chỉ hiện số
+                Text = "0",
                 AutoSize = true,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                ForeColor = Color.DarkSlateGray,
-                Padding = new Padding(2, 6, 2, 0), // Căn chỉnh text giữa dòng
+                // Tăng font lên 10.5 hoặc 11, dùng màu Xanh Đậm hoặc Đỏ Đậm để nổi bật trên nền trắng
+                Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
+                ForeColor = Color.Teal, // Màu xanh cổ vịt đậm (hoặc dùng Color.Red nếu thích)
+                TextAlign = ContentAlignment.MiddleCenter,
+                // Chỉnh Padding Top = 5 để căn giữa theo chiều dọc với các nút
+                Padding = new Padding(5, 5, 5, 0),
                 Margin = new Padding(0)
             };
 
+            // 4. Nút Send (Mũi tên) - Thu gọn
             var btnPushToInput = new Guna2Button
             {
-                Text = "Send Input ▼", // Rút gọn chữ
-                Width = 80,
+                Text = "⏬",
                 Height = compactH,
+                Width = 45, // Vừa đủ cho ngón tay bấm hoặc click chuột
                 FillColor = Color.FromArgb(14, 165, 233),
-                Font = compactFont
+                // Icon này để to một chút (13f) nhìn cho sướng mắt
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = compactMargin,
+                TextOffset = new Point(0, -2) // Đẩy icon lên trên 1 chút
             };
+            // Đừng quên dòng này
             btnPushToInput.Click += (s, e) => TransferAccountsToInput();
 
-            var numPush = new Guna2NumericUpDown
-            {
-                Value = 1,
-                Minimum = 1,
-                Maximum = 1000,
-                Width = 45, // Ô số bé lại
-                Height = compactH
-            };
-
-            var lblSL = new Label { Text = "SL:", TextAlign = ContentAlignment.MiddleRight, AutoSize = true, Padding = new Padding(0, 6, 0, 0), Font = compactFont };
-
-            // Thêm vào Panel (Thứ tự tối ưu)
+            // Thêm vào Panel (Thứ tự: Nạp -> Paste -> Label -> Send)
             pnlStoreAction.Controls.Add(btnLoadAcc);
             pnlStoreAction.Controls.Add(btnImportClipboard);
             pnlStoreAction.Controls.Add(_lblStorageCount);
-            pnlStoreAction.Controls.Add(lblSL);
-            pnlStoreAction.Controls.Add(numPush);
             pnlStoreAction.Controls.Add(btnPushToInput);
 
+            // Add Panel vào Tab
             tabNewAcc.Controls.Add(_gridStorage);
             tabNewAcc.Controls.Add(pnlStoreAction);
 
@@ -750,16 +773,31 @@ namespace ToolAdb
         {
             try
             {
+                // 1. Lấy dữ liệu
                 var row = _gridStorage.Rows[rowIndex];
                 string e = row.Cells[0].Value?.ToString() ?? "";
                 string p = row.Cells[1].Value?.ToString() ?? "";
 
+                // 2. Thêm vào bảng "Đã dùng" (Thao tác RAM, nhanh)
                 _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
-                File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}");
 
+                // 3. Ghi nối vào file Used (Thao tác Append, rất nhanh)
+                try
+                {
+                    File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}");
+                }
+                catch { }
+
+                // 4. Xóa dòng khỏi Grid (Thao tác UI)
                 _gridStorage.Rows.RemoveAt(rowIndex);
-                SaveStorageFile();
+
+                // 5. Cập nhật số lượng
                 UpdateStorageCount();
+
+                // 6. QUAN TRỌNG: Lưu file chạy ngầm (Không bao giờ lag nữa)
+                // Thay thế SaveStorageFile() bằng SaveStorageFileAsync()
+                SaveStorageFileAsync();
+
                 SetStatus("Đã chuyển 1 dòng sang Đã dùng.");
             }
             catch { }
@@ -815,52 +853,54 @@ namespace ToolAdb
 
         private void TransferAccountsToInput()
         {
-            var itemsToMove = new List<string>();
-            var rowsToRemove = new List<DataGridViewRow>();
+            // 1. Kiểm tra: Nếu kho rỗng thì thoát
+            if (_gridStorage.Rows.Count == 0) return;
 
-            if (_gridStorage.SelectedRows.Count > 0)
+            // --- BẮT ĐẦU TỐI ƯU UI (Quan trọng) ---
+            // Tạm dừng vẽ giao diện để thao tác nhanh hơn
+            _gridStorage.SuspendLayout();
+            _txtAccountInput.SuspendLayout();
+
+            // 2. Lấy dữ liệu dòng đầu tiên
+            var row = _gridStorage.Rows[0];
+            string e = row.Cells[0].Value?.ToString() ?? "";
+            string p = row.Cells[1].Value?.ToString() ?? "";
+            string accLine = $"{e}|{p}";
+
+            // 3. Đẩy sang ô Input
+            // Nếu ô input đang có chữ thì xuống dòng
+            if (_txtAccountInput.TextLength > 0)
             {
-                foreach (DataGridViewRow row in _gridStorage.SelectedRows)
-                {
-                    if (row.IsNewRow) continue;
-                    rowsToRemove.Add(row);
-                }
-                rowsToRemove.Reverse();
+                _txtAccountInput.AppendText(Environment.NewLine + accLine);
             }
             else
             {
-                int count = 1;
-                foreach (Control c in _tabStorage.TabPages[0].Controls)
-                {
-                    if (c is FlowLayoutPanel flp)
-                    {
-                        foreach (Control sub in flp.Controls) if (sub is Guna2NumericUpDown nud) count = (int)nud.Value;
-                    }
-                }
-                for (int i = 0; i < count && i < _gridStorage.Rows.Count; i++) rowsToRemove.Add(_gridStorage.Rows[i]);
+                _txtAccountInput.AppendText(accLine);
             }
 
-            if (rowsToRemove.Count == 0) return;
+            // Cuộn xuống cuối để thấy dòng mới thêm
+            _txtAccountInput.SelectionStart = _txtAccountInput.TextLength;
+            _txtAccountInput.ScrollToCaret();
 
-            foreach (var row in rowsToRemove)
-            {
-                string e = row.Cells[0].Value?.ToString() ?? "";
-                string p = row.Cells[1].Value?.ToString() ?? "";
-                itemsToMove.Add($"{e}|{p}");
-                _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
-                try { File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}"); } catch { }
-                _gridStorage.Rows.Remove(row);
-            }
+            // 4. Lưu vào tab "Đã dùng" & Ghi file Used
+            // (Thao tác này nhanh nên có thể để đây)
+            _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
+            try { File.AppendAllText(UsedAccountFile, accLine + Environment.NewLine); } catch { }
 
-            SaveStorageFile();
-            UpdateStorageCount();
+            // 5. Xóa khỏi kho (Đoạn bạn hỏi)
+            _gridStorage.Rows.RemoveAt(0); // Xóa dòng đầu tiên (Index 0)
 
-            if (itemsToMove.Count > 0)
-            {
-                if (!string.IsNullOrWhiteSpace(_txtAccountInput.Text)) _txtAccountInput.AppendText(Environment.NewLine);
-                _txtAccountInput.AppendText(string.Join(Environment.NewLine, itemsToMove));
-            }
-            SetStatus($"Đã chuyển {itemsToMove.Count} tài khoản sang Input.");
+            // 6. Cập nhật số lượng (Đoạn bạn hỏi)
+            // Cập nhật trực tiếp Text, không cần gọi hàm UpdateStorageCount phức tạp
+            _lblStorageCount.Text = _gridStorage.Rows.Count.ToString();
+
+            // --- KẾT THÚC TỐI ƯU UI ---
+            // 7. Cho phép vẽ lại giao diện (Đoạn bạn hỏi)
+            _txtAccountInput.ResumeLayout();
+            _gridStorage.ResumeLayout();
+
+            // 8. Lưu file chạy ngầm (Bắt buộc để không bị delay)
+            SaveStorageFileAsync();
         }
 
         // ==========================================
@@ -1170,6 +1210,26 @@ namespace ToolAdb
             parent.Controls.Add(card);
         }
         #endregion
+        private void SaveStorageFileAsync()
+        {
+            // Copy dữ liệu ra list tạm (Thao tác trên RAM, cực nhanh)
+            var lines = new List<string>();
+            foreach (DataGridViewRow row in _gridStorage.Rows)
+            {
+                string e = row.Cells[0].Value?.ToString() ?? "";
+                string p = row.Cells[1].Value?.ToString() ?? "";
+                if (!string.IsNullOrWhiteSpace(e)) lines.Add($"{e}|{p}");
+            }
+
+            // Đẩy việc ghi đĩa xuống luồng phụ (Background Thread)
+            Task.Run(() =>
+            {
+                lock (_saveLock) // Đảm bảo an toàn dữ liệu
+                {
+                    try { File.WriteAllText(AccountFile, string.Join(Environment.NewLine, lines)); } catch { }
+                }
+            });
+        }
     }
     public class NaturalComparer : IComparer<string>
     {
