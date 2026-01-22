@@ -174,13 +174,19 @@ namespace ToolAdb
             // --- CARD 2: DỌN DẸP (Tông Cam/Vàng & Đỏ) ---
             var cardApps = CreateGroupbox("Dọn dẹp & Ứng dụng");
 
-            // ... (Các nút Clear Chrome, Store, Google giữ nguyên) ...
-            AddBtn(cardApps, "Clear Chrome", Color.FromArgb(245, 158, 11), () => ActionRunAdbOnSelectedAsync("Clear Chrome", "shell pm clear com.android.chrome"));
-            AddBtn(cardApps, "Clear Play Store", Color.FromArgb(249, 115, 22), () => ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending"));
-            AddBtn(cardApps, "Clear Data Google", Color.FromArgb(220, 38, 38), () => {
-                ActionRunAdbOnSelectedAsync("Clear GMS", "shell pm clear com.google.android.gms");
-                ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending");
+            // ... (Các nút Clear Chrome, Store giữ nguyên) ...
+            AddBtn(cardApps, "Clear Chrome", Color.FromArgb(245, 158, 11), async () => await ActionRunAdbOnSelectedAsync("Clear Chrome", "shell pm clear com.android.chrome"));
+            AddBtn(cardApps, "Clear Play Store", Color.FromArgb(249, 115, 22), async () => await ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending"));
+
+            // ▼▼▼ SỬA LẠI ĐOẠN NÀY ▼▼▼
+            AddBtn(cardApps, "Clear Data Google", Color.FromArgb(220, 38, 38), async () => {
+                // Thêm 'await' để code chờ lệnh này chạy xong
+                await ActionRunAdbOnSelectedAsync("Clear GMS", "shell pm clear com.google.android.gms");
+                // Rồi mới chạy tiếp lệnh này
+                await ActionRunAdbOnSelectedAsync("Clear Store", "shell pm clear com.android.vending");
             });
+            // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
             AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(100, 116, 139), async () => await ActionKillAllUserApps());
 
             // --- KHU VỰC CHATGPT ---
@@ -208,8 +214,8 @@ namespace ToolAdb
                 SetStatus($"Set IME OK: {targets.Count} device(s)");
                 MessageBox.Show("Đã set IME cho các máy đã chọn.");
             });
-            AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), () => ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
-            AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), () => ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
+            AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), async () => await ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
+            AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), async () => await ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
             AddBtn(cardSystem, "⚡ Restart ADB Server", Color.FromArgb(71, 85, 105), async () => await ActionRestartAdb());
             AddBtn(cardSystem, "WIPE ALL DEVICE", Color.FromArgb(220, 38, 38), () => {
                 if (Confirm("CẢNH BÁO: WIPE SẠCH DỮ LIỆU TẤT CẢ MÁY?")) RunBat(@"bat\ResetMayAll.bat");
@@ -320,7 +326,7 @@ namespace ToolAdb
         // ==========================================
         // 4. AUTO REFRESH
         // ==========================================
-        private void DeviceWatcher_Tick(object sender, EventArgs e)
+        private void DeviceWatcher_Tick(object? sender, EventArgs e)
         {
             Task.Run(() => {
                 var currentIds = GetAdbDeviceIds();
@@ -1114,19 +1120,219 @@ namespace ToolAdb
             RunAdbWaitNoCapture(deviceId, "shell", "ime", "enable", AutomationImeId); RunAdbWaitNoCapture(deviceId, "shell", "ime", "set", AutomationImeId);
             lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
         }
-        private void ForceSetAutomationIme(IEnumerable<string> deviceIds) { if (deviceIds == null) return; foreach (var id in deviceIds) { RunAdbWaitNoCapture(id, "shell", "ime", "enable", AutomationImeId); RunAdbWaitNoCapture(id, "shell", "ime", "set", AutomationImeId); lock (_imeEnsuredLock) _imeEnsured.Add(id); } }
-        private void ImeClearText(string deviceId) => RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
-        private void ImeSendText(string deviceId, string text) { var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? "")); RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64); }
+        // --- 1. XỬ LÝ ADB & IME ---
+        private void ForceSetAutomationIme(IEnumerable<string> deviceIds)
+        {
+            if (deviceIds == null) return;
+            // Chuyển sang chạy song song (Parallel) để set IME nhanh hơn nếu danh sách nhiều máy
+            Parallel.ForEach(deviceIds, id =>
+            {
+                RunAdbWaitNoCapture(id, "shell", "ime", "enable", AutomationImeId);
+                RunAdbWaitNoCapture(id, "shell", "ime", "set", AutomationImeId);
+                lock (_imeEnsuredLock) _imeEnsured.Add(id);
+            });
+        }
 
-        private void ParseSecretsToGrid() { _grid2Fa.Rows.Clear(); var l = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries); int i = 1; foreach (var s in l) _grid2Fa.Rows.Add(i++, "Calc...", "Copy", "Gửi"); Update2FaGridCodes(); }
-        private void Update2FaGridCodes() { if (_grid2Fa == null) return; var l = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries); for (int i = 0; i < _grid2Fa.Rows.Count; i++) { if (i >= l.Length) break; try { _grid2Fa.Rows[i].Cells[1].Value = $"{ComputeTotp6(l[i].Trim())} ({GetTotpRemainingSeconds()}s)"; } catch { _grid2Fa.Rows[i].Cells[1].Value = "Error"; } } }
-        private void Grid2Fa_CellContentClick(object s, DataGridViewCellEventArgs e) { if (e.RowIndex < 0) return; var c = _grid2Fa.Rows[e.RowIndex].Cells[1].Value?.ToString()?.Split(' ')[0]; if (string.IsNullOrEmpty(c) || c == "Error") return; if (e.ColumnIndex == 2) { Clipboard.SetText(c); SetStatus("Copied 2FA"); } else if (e.ColumnIndex == 3) { Send2FaSingle(e.RowIndex, c); } }
-        private void Send2FaSingle(int rowIndex, string code) { var t = GetTargetDevices(); if (rowIndex < t.Count) { var id = t[rowIndex]; EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(20); ImeSendText(id, code); } else SetStatus("Không đủ thiết bị để gửi dòng này"); }
-        private async Task ActionSend2FaToAll() { var targets = GetTargetDevices(); if (targets.Count == 0) { MessageBox.Show("Chưa chọn thiết bị"); return; } SetStatus("Sending 2FA to all..."); await Task.Run(() => Parallel.For(0, targets.Count, i => { string code = ""; if (i < _grid2Fa.Rows.Count) { var val = _grid2Fa.Rows[i].Cells[1].Value?.ToString(); if (val != null && val.Contains(" ")) code = val.Split(' ')[0]; } if (!string.IsNullOrEmpty(code) && code != "Error") { var id = targets[i]; EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(20); ImeSendText(id, code); } })); StopProgress(); SetStatus("Sent 2FA Done."); }
-        private static string ComputeTotp6(string secretKey) { try { if (string.IsNullOrWhiteSpace(secretKey)) return "ERR"; secretKey = Regex.Replace(secretKey.Trim().ToUpperInvariant(), @"[^A-Z2-7=]", ""); byte[] keyBytes = Base32DecodeRfc4648(secretKey); if (keyBytes == null || keyBytes.Length == 0) return "ERR"; long counter = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30; byte[] counterBytes = BitConverter.GetBytes(System.Net.IPAddress.HostToNetworkOrder(counter)); using var hmac = new HMACSHA1(keyBytes); byte[] hash = hmac.ComputeHash(counterBytes); int offset = hash[hash.Length - 1] & 0x0F; int binary = ((hash[offset] & 0x7F) << 24) | ((hash[offset + 1] & 0xFF) << 16) | ((hash[offset + 2] & 0xFF) << 8) | (hash[offset + 3] & 0xFF); return (binary % 1_000_000).ToString("D6"); } catch { return "ERR"; } }
+        private void ImeClearText(string deviceId) =>
+            RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
+
+        private void ImeSendText(string deviceId, string text)
+        {
+            var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? ""));
+            RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64);
+        }
+
+        // --- 2. XỬ LÝ GRID & DATA 2FA ---
+        private void ParseSecretsToGrid()
+        {
+            _grid2Fa.Rows.Clear();
+            if (string.IsNullOrWhiteSpace(_txtSecretInput.Text)) return;
+
+            var l = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            int i = 1;
+            foreach (var s in l)
+            {
+                if (string.IsNullOrWhiteSpace(s)) continue;
+                _grid2Fa.Rows.Add(i++, "Calc...", "Copy", "Gửi");
+            }
+            Update2FaGridCodes();
+        }
+
+        private void Update2FaGridCodes()
+        {
+            if (_grid2Fa == null || _grid2Fa.Rows.Count == 0) return;
+
+            // Lấy danh sách secret từ textbox để tính toán (Tránh truy cập Cell nhiều lần)
+            var lines = _txtSecretInput.Text.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+            // Chỉ lặp qua những dòng có dữ liệu
+            int limit = Math.Min(lines.Length, _grid2Fa.Rows.Count);
+
+            for (int i = 0; i < limit; i++)
+            {
+                try
+                {
+                    // Tính toán Code
+                    string code = ComputeTotp6(lines[i].Trim());
+                    string time = $"({GetTotpRemainingSeconds()}s)";
+                    _grid2Fa.Rows[i].Cells[1].Value = $"{code} {time}";
+                }
+                catch
+                {
+                    _grid2Fa.Rows[i].Cells[1].Value = "Error";
+                }
+            }
+        }
+
+        // --- 3. SỰ KIỆN CLICK (ĐÃ SỬA LỖI NULL) ---
+        private void Grid2Fa_CellContentClick(object? s, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+
+            // Sửa lỗi Null Reference: Kiểm tra kỹ trước khi ToString
+            var rawVal = _grid2Fa.Rows[e.RowIndex].Cells[1].Value?.ToString();
+            if (string.IsNullOrEmpty(rawVal) || rawVal == "Error") return;
+
+            // Lấy mã Code (bỏ phần giây đi)
+            var code = rawVal.Split(' ')[0];
+
+            if (e.ColumnIndex == 2) // Nút Copy
+            {
+                Clipboard.SetText(code);
+                SetStatus($"Copied 2FA: {code}");
+            }
+            else if (e.ColumnIndex == 3) // Nút Gửi
+            {
+                // Gọi hàm async để không đơ máy
+                _ = Send2FaSingleAsync(e.RowIndex, code);
+            }
+        }
+
+        // --- 4. GỬI 1 MÁY (CHUYỂN SANG ASYNC ĐỂ KHÔNG LAG) ---
+        private async Task Send2FaSingleAsync(int rowIndex, string code)
+        {
+            var devices = GetTargetDevices();
+            if (rowIndex < devices.Count)
+            {
+                var id = devices[rowIndex];
+                SetStatus($"Sending 2FA to {id}...");
+
+                // Chạy ngầm để giao diện vẫn mượt
+                await Task.Run(() =>
+                {
+                    EnsureAutomationIme(id);
+                    ImeClearText(id);
+                    Thread.Sleep(50); // Delay nhỏ để máy kịp xóa
+                    ImeSendText(id, code);
+                    // Có thể thêm Enter nếu cần
+                    // RunAdbWaitNoCapture(id, "shell", "input", "keyevent", "66"); 
+                });
+
+                SetStatus($"Sent 2FA to {id}");
+            }
+            else
+            {
+                SetStatus("⚠️ Không đủ thiết bị (Dòng 2FA > Số lượng máy)");
+            }
+        }
+
+        // --- 5. GỬI TẤT CẢ (QUAN TRỌNG: FIX LỖI CROSS-THREAD) ---
+        private async Task ActionSend2FaToAll()
+        {
+            var targets = GetTargetDevices();
+            if (targets.Count == 0) { MessageBox.Show("Chưa chọn thiết bị"); return; }
+
+            // BƯỚC 1: Lấy dữ liệu từ Grid ra List TRƯỚC (Thao tác trên UI Thread)
+            var codesToSend = new List<string>();
+            for (int i = 0; i < _grid2Fa.Rows.Count; i++)
+            {
+                var val = _grid2Fa.Rows[i].Cells[1].Value?.ToString();
+                if (!string.IsNullOrEmpty(val) && val != "Error")
+                {
+                    codesToSend.Add(val.Split(' ')[0]); // Chỉ lấy code, bỏ (30s)
+                }
+                else
+                {
+                    codesToSend.Add(""); // Dòng lỗi hoặc trống
+                }
+            }
+
+            SetStatus("Sending 2FA to all...");
+            StartProgress();
+
+            // BƯỚC 2: Đưa List dữ liệu vào luồng chạy ngầm (An toàn tuyệt đối)
+            await Task.Run(() =>
+            {
+                Parallel.For(0, targets.Count, i =>
+                {
+                    // Chỉ gửi nếu có mã tương ứng với thứ tự máy
+                    if (i < codesToSend.Count && !string.IsNullOrEmpty(codesToSend[i]))
+                    {
+                        var id = targets[i];
+                        var code = codesToSend[i];
+
+                        EnsureAutomationIme(id);
+                        ImeClearText(id);
+                        Thread.Sleep(50);
+                        ImeSendText(id, code);
+                    }
+                });
+            });
+
+            StopProgress();
+            SetStatus("Sent 2FA Done.");
+        }
+
+        // --- 6. CÁC HÀM TÍNH TOÁN TOTP (GIỮ NGUYÊN) ---
+        private static string ComputeTotp6(string secretKey)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(secretKey)) return "ERR";
+                // Clean key: Bỏ khoảng trắng, chuyển chữ hoa
+                secretKey = Regex.Replace(secretKey.Trim().ToUpperInvariant(), @"[^A-Z2-7=]", "");
+
+                byte[] keyBytes = Base32DecodeRfc4648(secretKey);
+                if (keyBytes == null || keyBytes.Length == 0) return "ERR";
+
+                long counter = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30;
+                byte[] counterBytes = BitConverter.GetBytes(System.Net.IPAddress.HostToNetworkOrder(counter));
+
+                using var hmac = new HMACSHA1(keyBytes);
+                byte[] hash = hmac.ComputeHash(counterBytes);
+                int offset = hash[hash.Length - 1] & 0x0F;
+                int binary = ((hash[offset] & 0x7F) << 24) |
+                             ((hash[offset + 1] & 0xFF) << 16) |
+                             ((hash[offset + 2] & 0xFF) << 8) |
+                             (hash[offset + 3] & 0xFF);
+
+                return (binary % 1_000_000).ToString("D6");
+            }
+            catch { return "ERR"; }
+        }
+
         private static int GetTotpRemainingSeconds() => 30 - (int)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() % 30);
-        private static byte[] Base32DecodeRfc4648(string input) { input = input.TrimEnd('='); var result = new List<byte>(); int buffer = 0; int bitsLeft = 0; foreach (char c in input) { int val = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".IndexOf(c); if (val < 0) continue; buffer = (buffer << 5) | val; bitsLeft += 5; if (bitsLeft >= 8) { bitsLeft -= 8; result.Add((byte)((buffer >> bitsLeft) & 0xFF)); } } return result.ToArray(); }
-        #endregion
+
+        private static byte[] Base32DecodeRfc4648(string input)
+        {
+            input = input.TrimEnd('=');
+            var result = new List<byte>();
+            int buffer = 0;
+            int bitsLeft = 0;
+            foreach (char c in input)
+            {
+                int val = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".IndexOf(c);
+                if (val < 0) continue;
+                buffer = (buffer << 5) | val;
+                bitsLeft += 5;
+                if (bitsLeft >= 8)
+                {
+                    bitsLeft -= 8;
+                    result.Add((byte)((buffer >> bitsLeft) & 0xFF));
+                }
+            }
+            return result.ToArray();
+        }
 
         // ==========================================
         // 8. HELPERS (UI COMPONENTS)
@@ -1312,9 +1518,10 @@ namespace ToolAdb
         [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
         private static extern int StrCmpLogicalW(string psz1, string psz2);
 
-        public int Compare(string x, string y)
+        public int Compare(string? x, string? y)
         {
             return StrCmpLogicalW(x ?? "", y ?? "");
         }
     }
 }
+#endregion
