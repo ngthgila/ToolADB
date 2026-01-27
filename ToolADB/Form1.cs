@@ -25,12 +25,15 @@ namespace ToolAdb
         private string ApkDir => Path.Combine(BaseDir, "APK");
         private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
+        private const string AliasFile = "devices.json";
         private string AdbPath => Path.Combine(BaseDir, "adb.exe");
         private object _saveLock = new object();
         private System.Windows.Forms.Timer _inputScanTimer = null!;
+        private Panel pnlContent;
+        private Guna2TabControl tabControl;
+        private CheckedListBox _clbSidebarDevices; // List danh sách thiết bị
 
         // UI Controls (Null Forgiving)
-        private CheckedListBox _clbSidebarDevices = null!;
         private Label _lblStatusInfo = null!;
         private Guna2ProgressBar _progressBar = null!;
 
@@ -43,7 +46,7 @@ namespace ToolAdb
         private TextBox _txtSecretInput = null!;
         private Guna2DataGridView _grid2Fa = null!;
         private System.Windows.Forms.Timer _totpTimer = null!;
-
+        private bool _isTransferring = false;
         // Account Manager Storage
         private Guna2DataGridView _gridStorage = null!;
         private Guna2DataGridView _gridUsed = null!;
@@ -109,12 +112,61 @@ namespace ToolAdb
                 BackColor = Color.FromArgb(229, 231, 235)
             };
 
-            // --- SIDEBAR ---
+            // 1. SIDEBAR (THANH BÊN TRÁI - DẠNG DỌC)
+            // ==================================================
             var pnlSidebar = splitMain.Panel1;
+            pnlSidebar.Controls.Clear(); // Xóa sạch cái cũ
             pnlSidebar.BackColor = Color.White;
             pnlSidebar.Padding = new Padding(10);
-            var lblSideTitle = new Label { Text = "Thhiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
 
+            var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
+
+            // 1. Panel chứa nút (Tăng chiều cao lên để chứa đủ 4 dòng)
+            var flowSideBtns = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 180, // 4 nút x 40px + khoảng cách = ~180
+                BackColor = Color.White,
+                FlowDirection = FlowDirection.TopDown, // QUAN TRỌNG: Xếp từ trên xuống dưới
+                WrapContents = false, // Không cho nhảy sang cột bên cạnh
+                Padding = new Padding(0, 5, 0, 0),
+                AutoSize = false
+            };
+
+            // 2. Tính toán kích thước nút (Lấy Full chiều rộng Sidebar)
+            int btnWidth = pnlSidebar.Width - 20; // Trừ padding 2 bên ra
+
+            // Hàm tạo nút nhanh
+            Guna2Button MkSideBtn(string txt, Color c) => new Guna2Button
+            {
+                Text = txt,
+                Width = btnWidth, // Nút rộng bằng Sidebar
+                Height = 38,      // Chiều cao vừa phải
+                BorderRadius = 4,
+                FillColor = c,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 0, 5), // Cách nút dưới 5px
+                Cursor = Cursors.Hand
+            };
+
+            // 3. Tạo các nút
+            var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
+            btnSelectAll.Click += (s, e) => { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, true); };
+
+            var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139));
+            btnSelectNone.Click += (s, e) => { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, false); };
+
+            var btnRefreshSide = MkSideBtn("Làm mới (Refresh)", Color.FromArgb(16, 185, 129));
+            btnRefreshSide.Click += async (s, e) => await ReloadDevices();
+
+            var btnRenameSide = MkSideBtn("Đổi tên thiết bị", Color.FromArgb(245, 158, 11));
+            btnRenameSide.Click += (s, e) => ActionRenameSelected();
+
+            // Thêm vào FlowLayout
+            flowSideBtns.Controls.AddRange(new Control[] { btnSelectAll, btnSelectNone, btnRefreshSide, btnRenameSide });
+
+            // 4. ListBox Thiết bị
             _clbSidebarDevices = new CheckedListBox
             {
                 Dock = DockStyle.Fill,
@@ -123,34 +175,81 @@ namespace ToolAdb
                 Font = new Font("Segoe UI", 10f),
                 IntegralHeight = false
             };
+            // ... (Code tạo _clbSidebarDevices ở bước trước) ...
 
-            var pnlSideBtns = new Panel { Dock = DockStyle.Bottom, Height = 140 };
+            // 1. TẠO MENU CHUỘT PHẢI
+            var ctxMenu = new ContextMenuStrip();
+            var itemCopy = ctxMenu.Items.Add("Copy Device ID");
+            var itemRename = ctxMenu.Items.Add("Đổi tên (Rename)");
+            var itemView = ctxMenu.Items.Add("Xem màn hình (Scrcpy)");
 
-            var btnSelectAll = CreateSideButton("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
-            btnSelectAll.Dock = DockStyle.Top;
-            btnSelectAll.Click += (s, e) => ToggleSidebarSelection(true);
+            _clbSidebarDevices.ContextMenuStrip = ctxMenu;
 
-            var btnSelectNone = CreateSideButton("Bỏ Chọn", Color.FromArgb(100, 116, 139));
-            btnSelectNone.Dock = DockStyle.Top;
-            btnSelectNone.Click += (s, e) => ToggleSidebarSelection(false);
+            // Xử lý khi chuột phải: Tự động chọn dòng đang trỏ vào
+            _clbSidebarDevices.MouseDown += (s, e) => {
+                if (e.Button == MouseButtons.Right)
+                {
+                    int index = _clbSidebarDevices.IndexFromPoint(e.Location);
+                    if (index != ListBox.NoMatches)
+                    {
+                        _clbSidebarDevices.SelectedIndex = index; // Chọn dòng đó
+                    }
+                }
+            };
 
-            var btnRenameSide = CreateSideButton("Đổi tên", Color.FromArgb(245, 158, 11));
-            btnRenameSide.Dock = DockStyle.Top;
-            btnRenameSide.Click += (s, e) => RenameSelectedDevice();
+            // Logic nút Copy ID
+            itemCopy.Click += (s, e) => {
+                if (_clbSidebarDevices.SelectedItem == null) return;
+                string raw = _clbSidebarDevices.SelectedItem.ToString();
+                // Tách lấy ID (Logic giống hàm GetTargetDevices)
+                string id = raw.Contains("(") && raw.EndsWith(")") ? raw.Substring(raw.LastIndexOf('(') + 1).Trim(')') : raw;
+                Clipboard.SetText(id);
+                SetStatus($"Đã copy ID: {id}");
+            };
 
-            var btnRefreshSide = CreateSideButton("Refresh", Color.FromArgb(16, 185, 129));
-            btnRefreshSide.Dock = DockStyle.Bottom;
-            btnRefreshSide.Click += (s, e) => RefreshDeviceList();
+            // Logic nút Đổi tên
+            itemRename.Click += (s, e) => ActionRenameSelected(); // Gọi lại hàm đổi tên bạn đã có
 
-            var pnlSpacer = new Panel { Dock = DockStyle.Fill };
-            pnlSideBtns.Controls.AddRange(new Control[] { pnlSpacer, btnRefreshSide, btnRenameSide, btnSelectNone, btnSelectAll });
-            pnlSidebar.Controls.AddRange(new Control[] { _clbSidebarDevices, pnlSideBtns, lblSideTitle });
+            // Logic nút Xem màn hình (Click đúp cũng gọi cái này)
+            void OpenScrcpyAction()
+            {
+                if (_clbSidebarDevices.SelectedItem == null) return;
+                string raw = _clbSidebarDevices.SelectedItem.ToString();
+                string id = raw.Contains("(") && raw.EndsWith(")") ? raw.Substring(raw.LastIndexOf('(') + 1).Trim(')') : raw;
 
-            // --- CONTENT ---
-            var pnlContent = splitMain.Panel2;
+                // Chạy scrcpy (Giả sử bạn có file scrcpy.exe cùng thư mục)
+                SetStatus($"Đang mở Scrcpy cho {id}...");
+                Task.Run(() => {
+                    try
+                    {
+                        var proc = new Process();
+                        proc.StartInfo.FileName = "scrcpy.exe"; // Hoặc đường dẫn tuyệt đối
+                        proc.StartInfo.Arguments = $"-s {id} --window-title \"{raw}\"";
+                        proc.StartInfo.UseShellExecute = false;
+                        proc.StartInfo.CreateNoWindow = true; // Ẩn Console đen
+                        proc.Start();
+                    }
+                    catch { MessageBox.Show("Không tìm thấy file scrcpy.exe!"); }
+                });
+            }
+
+            itemView.Click += (s, e) => OpenScrcpyAction();
+
+            // 2. SỰ KIỆN CLICK ĐÚP (Double Click) -> Mở màn hình luôn
+            _clbSidebarDevices.DoubleClick += (s, e) => OpenScrcpyAction();
+            // Add vào Sidebar
+            pnlSidebar.Controls.Add(lblSideTitle);
+            pnlSidebar.Controls.Add(flowSideBtns); // Nút nằm đáy
+            pnlSidebar.Controls.Add(_clbSidebarDevices); // List nằm giữa
+            _clbSidebarDevices.BringToFront();
+
+            // 2. CONTENT (BÊN PHẢI)
+            // Gán vào biến toàn cục (không dùng var)
+            pnlContent = splitMain.Panel2;
             pnlContent.BackColor = Color.FromArgb(243, 244, 246);
+            pnlContent.Controls.Clear();
 
-            var tabControl = new Guna2TabControl
+            tabControl = new Guna2TabControl
             {
                 Dock = DockStyle.Fill,
                 TabButtonIdleState = { FillColor = Color.Transparent, ForeColor = Color.Gray, Font = new Font("Segoe UI Semibold", 10f) },
@@ -159,6 +258,10 @@ namespace ToolAdb
                 Alignment = TabAlignment.Top,
                 ItemSize = new Size(120, 40)
             };
+            pnlContent.Controls.Add(tabControl);
+
+            // Thêm tabControl vào panel
+            pnlContent.Controls.Add(tabControl);
 
             // TAB 1: DASHBOARD
             var tabDash = new TabPage { Text = "Dashboard", BackColor = Color.FromArgb(248, 250, 252) };
@@ -187,7 +290,7 @@ namespace ToolAdb
             });
             // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-            AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(100, 116, 139), async () => await ActionKillAllUserApps());
+            // AddBtn(cardApps, "Đóng User Apps", Color.FromArgb(100, 116, 139), async () => await ActionKillAllUserApps());
 
             // --- KHU VỰC CHATGPT ---
 
@@ -239,10 +342,6 @@ namespace ToolAdb
 
             pnlContent.Controls.Add(tabControl);
 
-            // =========================================================
-            // CHỐT HẠ: CODE GỌN NHẤT - KHÔNG CẦN CONTAINER TRUNG GIAN
-            // =========================================================
-
             // Chỉ cần thêm thẳng giao diện chính vào Form
             this.Controls.Add(splitMain);
 
@@ -250,7 +349,6 @@ namespace ToolAdb
             splitMain.BringToFront();
         }
 
-        // ==========================================
         // 3. LOGIC SETUP ANDROID
         // ==========================================
         private async Task ActionSetupAll()
@@ -430,33 +528,96 @@ namespace ToolAdb
                 AutoSize = true,
                 // Tăng font lên 10.5 hoặc 11, dùng màu Xanh Đậm hoặc Đỏ Đậm để nổi bật trên nền trắng
                 Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
-                ForeColor = Color.Teal, // Màu xanh cổ vịt đậm (hoặc dùng Color.Red nếu thích)
+                ForeColor = Color.Red, // Màu xanh cổ vịt đậm (hoặc dùng Color.Red nếu thích)
                 TextAlign = ContentAlignment.MiddleCenter,
                 // Chỉnh Padding Top = 5 để căn giữa theo chiều dọc với các nút
                 Padding = new Padding(5, 5, 5, 0),
                 Margin = new Padding(0)
             };
 
-            // 4. Nút Send (Mũi tên) - Thu gọn
+            // --- TẠO Ô CHỌN SỐ LƯỢNG (MỚI) ---
+            var numTakeCount = new Guna2NumericUpDown
+            {
+                Value = 1,          // Mặc định lấy 1
+                Minimum = 1,        // Tối thiểu 1
+                Maximum = 1000,     // Tối đa 1000
+                DecimalPlaces = 0,  // Chỉ nhập số nguyên
+                Width = 70,         // Chiều rộng vừa phải
+                Height = compactH,  // Chiều cao bằng các nút khác
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 5, 0), // Cách lề phải một chút
+                BorderRadius = 5,
+                FillColor = Color.White,
+                ForeColor = Color.FromArgb(14, 165, 233), // Màu chữ xanh
+                UpDownButtonFillColor = Color.FromArgb(240, 244, 248), // Màu nền nút lên xuống
+                UpDownButtonForeColor = Color.FromArgb(14, 165, 233)   // Màu mũi tên
+            };
+
+            // --- NÚT SEND (SỬA LẠI SỰ KIỆN CLICK) ---
             var btnPushToInput = new Guna2Button
             {
-                Text = "⏬",
+                Text = "↩",
                 Height = compactH,
-                Width = 45, // Vừa đủ cho ngón tay bấm hoặc click chuột
+                Width = 45,
                 FillColor = Color.FromArgb(14, 165, 233),
-                // Icon này để to một chút (13f) nhìn cho sướng mắt
+                ForeColor = Color.White,
                 Font = new Font("Segoe UI", 13f, FontStyle.Bold),
                 Margin = compactMargin,
-                TextOffset = new Point(0, -2) // Đẩy icon lên trên 1 chút
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
             };
-            // Đừng quên dòng này
-            btnPushToInput.Click += (s, e) => TransferAccountsToInput();
 
+            // SỰ KIỆN QUAN TRỌNG: Lấy giá trị từ ô numTakeCount truyền vào hàm
+            btnPushToInput.Click += (s, e) => {
+                // Lấy giá trị số lượng người dùng đang chọn
+                int countToTake = (int)numTakeCount.Value;
+
+                // Gọi hàm lấy hàng loạt (đã sửa ở bước trước)
+                TransferAccountsToInput(countToTake);
+            };
+            // --- NÚT XÓA INPUT ---
+            var btnClearInput = new Guna2Button
+            {
+                Text = "🗑",
+                Height = compactH,
+                Width = 45,
+                FillColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = new Padding(5, 0, 0, 0),
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
+                // ❌ Đã xóa dòng ToolTipText gây lỗi
+            };
+
+            // ▼▼▼ THÊM ĐOẠN NÀY ĐỂ TẠO TOOLTIP ▼▼▼
+            var tt = new System.Windows.Forms.ToolTip();
+            tt.SetToolTip(btnClearInput, "Xóa trắng ô Input và 2FA");
+            // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+
+            // Sự kiện Click (Giữ nguyên)
+            btnClearInput.Click += (s, e) => {
+                if (_txtAccountInput.TextLength == 0 && _txtSecretInput.TextLength == 0) return;
+
+                var ask = MessageBox.Show("Bạn muốn xóa trắng toàn bộ dữ liệu đang nhập (Account & 2FA)?",
+                                          "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (ask == DialogResult.Yes)
+                {
+                    _txtAccountInput.Clear();
+                    _txtSecretInput.Clear();
+                    if (_grid2Fa != null) _grid2Fa.Rows.Clear();
+                    SetStatus("Đã dọn dẹp Input.");
+                }
+            };
             // Thêm vào Panel (Thứ tự: Nạp -> Paste -> Label -> Send)
             pnlStoreAction.Controls.Add(btnLoadAcc);
             pnlStoreAction.Controls.Add(btnImportClipboard);
             pnlStoreAction.Controls.Add(_lblStorageCount);
             pnlStoreAction.Controls.Add(btnPushToInput);
+            pnlStoreAction.Controls.Add(numTakeCount);   // 1. Ô nhập số
+            pnlStoreAction.Controls.Add(btnPushToInput); // 2. Nút Send
+            pnlStoreAction.Controls.Add(btnClearInput);  // Nút Thùng rác (🗑)
 
             // Add Panel vào Tab
             tabNewAcc.Controls.Add(_gridStorage);
@@ -859,58 +1020,93 @@ namespace ToolAdb
             int count = _gridStorage.Rows.Count;
             if (_lblStorageCount != null) _lblStorageCount.Text = $"Còn: {count}";
             if (_tabStorage != null && _tabStorage.TabPages.Count > 0)
-                _tabStorage.TabPages[0].Text = $"Kho ({count})";
+                _tabStorage.TabPages[0].Text = $"Kho";
         }
 
-        private void TransferAccountsToInput()
+        private void TransferAccountsToInput(int count = 1)
         {
-            // 1. Kiểm tra: Nếu kho rỗng thì thoát
-            if (_gridStorage.Rows.Count == 0) return;
+            // 1. CHỐNG SPAM: Nếu đang xử lý thì không nhận lệnh mới
+            if (_isTransferring) return;
+            _isTransferring = true;
 
-            // --- BẮT ĐẦU TỐI ƯU UI (Quan trọng) ---
-            // Tạm dừng vẽ giao diện để thao tác nhanh hơn
-            _gridStorage.SuspendLayout();
-            _txtAccountInput.SuspendLayout();
-
-            // 2. Lấy dữ liệu dòng đầu tiên
-            var row = _gridStorage.Rows[0];
-            string e = row.Cells[0].Value?.ToString() ?? "";
-            string p = row.Cells[1].Value?.ToString() ?? "";
-            string accLine = $"{e}|{p}";
-
-            // 3. Đẩy sang ô Input
-            // Nếu ô input đang có chữ thì xuống dòng
-            if (_txtAccountInput.TextLength > 0)
+            if (_gridStorage.Rows.Count == 0)
             {
-                _txtAccountInput.AppendText(Environment.NewLine + accLine);
-            }
-            else
-            {
-                _txtAccountInput.AppendText(accLine);
+                SetStatus("Kho tài khoản trống!");
+                _isTransferring = false;
+                return;
             }
 
-            // Cuộn xuống cuối để thấy dòng mới thêm
-            _txtAccountInput.SelectionStart = _txtAccountInput.TextLength;
-            _txtAccountInput.ScrollToCaret();
+            try
+            {
+                // Tạm dừng giao diện để xử lý mượt (đặc biệt khi lấy 20-50 dòng)
+                _gridStorage.SuspendLayout();
+                _txtAccountInput.SuspendLayout();
 
-            // 4. Lưu vào tab "Đã dùng" & Ghi file Used
-            // (Thao tác này nhanh nên có thể để đây)
-            _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
-            try { File.AppendAllText(UsedAccountFile, accLine + Environment.NewLine); } catch { }
+                int actualToTake = Math.Min(count, _gridStorage.Rows.Count);
+                List<string> linesTaken = new List<string>();
+                List<DataGridViewRow> rowsToRemove = new List<DataGridViewRow>();
 
-            // 5. Xóa khỏi kho (Đoạn bạn hỏi)
-            _gridStorage.Rows.RemoveAt(0); // Xóa dòng đầu tiên (Index 0)
+                // BƯỚC 1: Duyệt và gom dữ liệu (Không xóa ngay để tránh lệch Index)
+                for (int i = 0; i < actualToTake; i++)
+                {
+                    var row = _gridStorage.Rows[i];
+                    if (row.IsNewRow) continue;
 
-            // 6. Cập nhật số lượng (Đoạn bạn hỏi)
-            // Cập nhật trực tiếp Text, không cần gọi hàm UpdateStorageCount phức tạp
-            _lblStorageCount.Text = _gridStorage.Rows.Count.ToString();
+                    string e = row.Cells[0].Value?.ToString()?.Trim() ?? "";
+                    string p = row.Cells[1].Value?.ToString()?.Trim() ?? "";
 
-            // --- KẾT THÚC TỐI ƯU UI ---
-            // 7. Cho phép vẽ lại giao diện (Đoạn bạn hỏi)
-            _txtAccountInput.ResumeLayout();
-            _gridStorage.ResumeLayout();
+                    if (!string.IsNullOrEmpty(e))
+                    {
+                        linesTaken.Add($"{e}|{p}");
+                        rowsToRemove.Add(row); // Lưu lại dòng này để xóa sau
+                    }
+                }
 
-            // 8. Lưu file chạy ngầm (Bắt buộc để không bị delay)
+                // BƯỚC 2: Cập nhật vào ô Input
+                if (linesTaken.Count > 0)
+                {
+                    string bulkText = string.Join(Environment.NewLine, linesTaken);
+                    if (_txtAccountInput.TextLength > 0)
+                        _txtAccountInput.AppendText(Environment.NewLine + bulkText);
+                    else
+                        _txtAccountInput.AppendText(bulkText);
+
+                    // Cuộn xuống cuối
+                    _txtAccountInput.SelectionStart = _txtAccountInput.TextLength;
+                    _txtAccountInput.ScrollToCaret();
+
+                    // BƯỚC 3: Xóa khỏi kho Storage và thêm vào kho Đã dùng
+                    foreach (var row in rowsToRemove)
+                    {
+                        // Thêm vào tab "Đã dùng" trên giao diện
+                        string email = row.Cells[0].Value?.ToString() ?? "";
+                        string pass = row.Cells[1].Value?.ToString() ?? "";
+                        _gridUsed.Rows.Add(email, pass, "Used", DateTime.Now.ToString("HH:mm:ss"));
+
+                        // Xóa chính xác dòng này khỏi kho (Cực kỳ an toàn)
+                        _gridStorage.Rows.Remove(row);
+                    }
+
+                    // Ghi file Used (Ghi nối đuôi - Append)
+                    File.AppendAllLines(UsedAccountFile, linesTaken);
+
+                    // BƯỚC 4: Cập nhật con số hiển thị
+                    _lblStorageCount.Text = _gridStorage.Rows.Count.ToString();
+                    SetStatus($"Đã lấy {linesTaken.Count} tài khoản.");
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Lỗi lấy tài khoản: " + ex.Message);
+            }
+            finally
+            {
+                _txtAccountInput.ResumeLayout();
+                _gridStorage.ResumeLayout();
+                _isTransferring = false; // Mở khóa cho lần bấm sau
+            }
+
+            // BƯỚC 5: Lưu lại file kho (Chạy ngầm để không lag)
             SaveStorageFileAsync();
         }
 
@@ -955,7 +1151,109 @@ namespace ToolAdb
             StopProgress(); SetStatus("ADB Server Restarted."); RefreshDeviceList();
             MessageBox.Show("ADB Server đã khởi động lại.");
         }
+        // --- CÁC HÀM XỬ LÝ LOGIC CÒN THIẾU ---
 
+        // 1. Hàm Refresh danh sách thiết bị
+        private async Task ReloadDevices()
+        {
+            if (_clbSidebarDevices == null) return;
+
+            SetStatus("Đang quét thiết bị...");
+            _clbSidebarDevices.Items.Clear(); // Xóa danh sách cũ
+
+            // Chạy lệnh adb devices (Giả lập logic lấy thiết bị)
+            // Lưu ý: Bạn thay thế logic này bằng hàm GetDevices thực tế của bạn
+            var devices = await Task.Run(() => GetTargetDevices());
+
+            if (devices != null && devices.Count > 0)
+            {
+                foreach (var d in devices)
+                {
+                    _clbSidebarDevices.Items.Add(d, true); // Mặc định check true
+                }
+                SetStatus($"Tìm thấy {devices.Count} thiết bị.");
+            }
+            else
+            {
+                SetStatus("Không tìm thấy thiết bị nào.");
+            }
+        }
+
+        // 2. Hàm Đổi tên thiết bị (Ví dụ cơ bản)
+        private void ActionRenameSelected()
+        {
+            // 1. Kiểm tra có chọn thiết bị chưa
+            if (_clbSidebarDevices.CheckedItems.Count == 0)
+            {
+                MessageBox.Show("Vui lòng tích chọn các thiết bị muốn đặt tên!");
+                return;
+            }
+
+            // 2. Hiện hộp thoại nhập "Tên gốc" (Prefix)
+            // Ví dụ nhập: "Máy" -> Sẽ ra Máy 1, Máy 2...
+            // Ví dụ nhập: "Acc" -> Sẽ ra Acc 1, Acc 2...
+            string prefixName = ShowInputDialog("Nhập tên gốc để đánh số tự động (Ví dụ: Máy):", "Đổi tên hiển thị");
+
+            // Nếu người dùng ấn Cancel hoặc để trống thì thôi
+            if (string.IsNullOrWhiteSpace(prefixName)) return;
+
+            // 3. Xử lý đổi tên hàng loạt
+            // Dùng List tạm để lưu vị trí các dòng đang chọn
+            var checkedIndices = _clbSidebarDevices.CheckedIndices.Cast<int>().ToList();
+
+            int count = 1; // Bắt đầu đếm từ 1
+
+            foreach (int index in checkedIndices)
+            {
+                // Lấy nội dung cũ
+                string oldText = _clbSidebarDevices.Items[index].ToString();
+
+                // Bóc tách lấy Device ID thực sự
+                // Logic: Nếu đang là "Tên Cũ (ID123)" -> Lấy ID123. Nếu là "ID123" -> Lấy nguyên.
+                string realId = oldText;
+                if (oldText.Contains("(") && oldText.EndsWith(")"))
+                {
+                    realId = oldText.Substring(oldText.LastIndexOf('(') + 1).Trim(')');
+                }
+
+                // Tạo tên mới theo định dạng: "Tên_Gốc Số_Thứ_Tự (Real_ID)"
+                string newDisplayName = $"{prefixName} {count} ({realId})";
+
+                // Cập nhật lại vào ListBox
+                _clbSidebarDevices.Items[index] = newDisplayName;
+
+                count++; // Tăng số thứ tự cho máy tiếp theo
+            }
+        }
+
+        // --- HÀM HỖ TRỢ: TẠO HỘP THOẠI NHẬP LIỆU (KHÔNG CẦN THƯ VIỆN NGOÀI) ---
+        // Bạn copy hàm này để dưới cùng file Form1.cs để dùng thay cho Microsoft.VisualBasic
+        private string ShowInputDialog(string text, string caption)
+        {
+            Form prompt = new Form()
+            {
+                Width = 400,
+                Height = 180,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                Text = caption,
+                StartPosition = FormStartPosition.CenterScreen,
+                MaximizeBox = false,
+                MinimizeBox = false
+            };
+
+            Label textLabel = new Label() { Left = 20, Top = 20, Text = text, Width = 350, Font = new Font("Segoe UI", 10f) };
+            TextBox textBox = new TextBox() { Left = 20, Top = 50, Width = 340, Font = new Font("Segoe UI", 11f) };
+
+            Button confirmation = new Button() { Text = "OK", Left = 240, Width = 120, Top = 90, DialogResult = DialogResult.OK, Height = 35, BackColor = Color.FromArgb(14, 165, 233), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+
+            confirmation.Click += (sender, e) => { prompt.Close(); };
+            prompt.Controls.Add(textBox);
+            prompt.Controls.Add(confirmation);
+            prompt.Controls.Add(textLabel);
+            prompt.AcceptButton = confirmation;
+
+            return prompt.ShowDialog() == DialogResult.OK ? textBox.Text : "";
+        }
         private async Task ActionInstallApkmFileDialog()
         {
             var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
@@ -1030,7 +1328,50 @@ namespace ToolAdb
         }
 
         private void ToggleSidebarSelection(bool check) { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, check); }
-        private List<string> GetTargetDevices() { var list = new List<string>(); foreach (var item in _clbSidebarDevices.CheckedItems) { var s = item.ToString(); if (s.Contains("(") && s.EndsWith(")")) list.Add(s.Substring(s.LastIndexOf('(') + 1).Trim(')')); else list.Add(s); } return list; }
+        private List<string> GetTargetDevices()
+        {
+            // 1. Chống Crash: Nếu ListBox chưa tạo xong thì trả về danh sách rỗng
+            if (_clbSidebarDevices == null) return new List<string>();
+
+            // 2. Chống lỗi Cross-thread (Rất quan trọng): 
+            // Nếu hàm này bị gọi từ luồng chạy ngầm (Task.Run), nó sẽ tự nhờ UI Thread lấy hộ
+            if (_clbSidebarDevices.InvokeRequired)
+            {
+                return (List<string>)_clbSidebarDevices.Invoke(new Func<List<string>>(() => GetTargetDevices()));
+            }
+
+            var list = new List<string>();
+
+            // 3. Lấy dữ liệu an toàn
+            foreach (var item in _clbSidebarDevices.CheckedItems)
+            {
+                if (item == null) continue;
+
+                var s = item.ToString();
+                if (string.IsNullOrEmpty(s)) continue;
+
+                // Logic tách ID: "Samsung S10 (zyx123)" -> Lấy "zyx123"
+                if (s.Contains("(") && s.EndsWith(")"))
+                {
+                    try
+                    {
+                        int lastOpen = s.LastIndexOf('(');
+                        string id = s.Substring(lastOpen + 1).Trim(')');
+                        list.Add(id);
+                    }
+                    catch
+                    {
+                        list.Add(s); // Nếu lỗi tách chuỗi thì lấy nguyên gốc
+                    }
+                }
+                else
+                {
+                    list.Add(s);
+                }
+            }
+
+            return list;
+        }
         private void RunBat(string bat, string args = "") { var p = Path.Combine(BaseDir, bat); if (!File.Exists(p)) { MessageBox.Show("Missing: " + p); return; } Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"\"{p}\" {args}\"", UseShellExecute = false, CreateNoWindow = false, WorkingDirectory = BaseDir }); }
 
         private void ValidateAdbExists() { if (!File.Exists(AdbPath)) MessageBox.Show("Thiếu adb.exe trong thư mục tool: " + AdbPath); }
@@ -1334,92 +1675,209 @@ namespace ToolAdb
             return result.ToArray();
         }
 
-        // ==========================================
-        // 8. HELPERS (UI COMPONENTS)
-        // ==========================================
         #region Helpers
+
+        // ==========================================
+        // 1. TAB CONVERT (CHUYỂN ĐỔI DỮ LIỆU)
+        // ==========================================
         private void BuildConvertTab(TabPage page)
         {
-            var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 400, SplitterWidth = 35, BackColor = Color.FromArgb(241, 245, 249) };
-            double? userRatio = null; bool userDragging = false;
-            split.SplitterMoving += (s, e) => userDragging = true;
-            split.SplitterMoved += (s, e) => { userDragging = false; var w = split.ClientSize.Width; if (w > 0) userRatio = split.SplitterDistance / (double)w; };
-            split.SizeChanged += (s, e) => { if (userDragging) return; if (userRatio == null) return; var w = split.ClientSize.Width; if (w <= 0) return; var d = (int)(w * userRatio.Value); split.SplitterDistance = Math.Max(0, Math.Min(d, w)); };
+            page.BackColor = Color.FromArgb(248, 250, 252);
 
-            var pnlLeft = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15), BackColor = Color.White };
-            _txtConvertIn = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), PlaceholderText = "Mỗi record 3 dòng:\r\nemail\r\npassword\r\n2fa_secret\r\n..." };
-            pnlLeft.Controls.Add(_txtConvertIn); pnlLeft.Controls.Add(new Label { Text = "Input (3 dòng = 1 record)", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft });
-            split.Panel1.Controls.Add(pnlLeft);
-
-            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15), BackColor = Color.White };
-            _txtConvertOut = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BackColor = SystemColors.Window, Cursor = Cursors.Hand };
-            _txtConvertOut.Click += (s, e) => { if (!string.IsNullOrWhiteSpace(_txtConvertOut.Text)) { Clipboard.SetText(_txtConvertOut.Text); SetStatus("Copied output"); } };
-            var btnConvert = new Guna2Button { Text = "Chuyển đổi", Height = 36, Width = 120, FillColor = Color.FromArgb(14, 165, 233), BorderRadius = 4 };
-            btnConvert.Click += (s, e) => {
-                var lines = (_txtConvertIn.Text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
-                if (lines.Count == 0) { _txtConvertOut.Text = ""; return; }
-                var outLines = new List<string>();
-                for (int i = 0; i + 2 < lines.Count; i += 3) outLines.Add($"{lines[i]}\t{lines[i + 1]}\t{lines[i + 2]}");
-                _txtConvertOut.Text = string.Join(Environment.NewLine, outLines);
-                SetStatus($"Đã chuyển đổi {outLines.Count} dòng.");
+            // 1. THANH CÔNG CỤ (Cho phép cuộn ngang nếu màn hình bé)
+            var pnlTop = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 60,
+                Padding = new Padding(10, 12, 10, 10),
+                BackColor = Color.White,
+                FlowDirection = FlowDirection.LeftToRight,
+                AutoScroll = true, // Quan trọng: Nếu bị che sẽ hiện thanh cuộn
+                WrapContents = false // Quan trọng: Ép nằm trên 1 dòng
             };
-            var btnCopy = new Guna2Button { Text = "Copy", Height = 36, Width = 130, FillColor = Color.FromArgb(34, 197, 94), BorderRadius = 4 };
-            btnCopy.Click += (s, e) => { if (!string.IsNullOrWhiteSpace(_txtConvertOut.Text)) { Clipboard.SetText(_txtConvertOut.Text); SetStatus("Copied output"); } };
-            var pnlBtns = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
-            pnlBtns.Controls.AddRange(new Control[] { btnConvert, btnCopy });
-            pnlRight.Controls.AddRange(new Control[] { _txtConvertOut, new Panel { Height = 10, Dock = DockStyle.Top }, pnlBtns, new Label { Text = "Output (TAB-separated)", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) } });
+
+            // ComboBox (Thu gọn width từ 320 -> 260 cho thoáng)
+            var cboMode = new Guna2ComboBox
+            {
+                Width = 260,
+                Height = 36,
+                BorderRadius = 4,
+                BorderColor = Color.FromArgb(203, 213, 225),
+                Font = new Font("Segoe UI", 9.5f),
+                StartIndex = 1 // Mặc định: 3 Cột
+            };
+
+            cboMode.Items.AddRange(new object[] {
+        "0. 3 dòng -> User|Pass|2FA",
+        "1. 3 dòng -> 3 CỘT (Google Sheet)",
+        "2. 1 dòng (|) -> 3 CỘT (Tab)",
+        "3. Lấy riêng cột 2FA",
+        "4. Lấy User|Pass (Bỏ 2FA)"
+    });
+
+            // Các nút chức năng (Thu gọn width)
+            var btnConvert = CreateButton("Chuyển đổi", Color.FromArgb(14, 165, 233), 90);
+            var btnCopy = CreateButton("Copy Output", Color.FromArgb(34, 197, 94), 100);
+
+            // ▼▼▼ NÚT XÓA (MÀU ĐỎ)
+            var btnClear = CreateButton("Xóa", Color.FromArgb(239, 68, 68), 70);
+
+            // Thêm theo thứ tự
+            pnlTop.Controls.AddRange(new Control[] { cboMode, btnConvert, btnCopy, btnClear });
+
+            // 2. MAIN AREA (GIỮ NGUYÊN)
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterDistance = 450,
+                SplitterWidth = 10,
+                BackColor = Color.FromArgb(241, 245, 249)
+            };
+
+            var pnlLeft = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15, 10, 5, 15) };
+            var lblIn = new Label { Text = "Input:", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Color.FromArgb(71, 85, 105) };
+            var txtIn = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "Email\r\nPass\r\n2FA..." };
+            pnlLeft.Controls.Add(txtIn); pnlLeft.Controls.Add(lblIn);
+
+            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(5, 10, 15, 15) };
+            var lblOut = new Label { Text = "Output:", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Color.FromArgb(71, 85, 105) };
+            var txtOut = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BackColor = Color.WhiteSmoke, BorderStyle = BorderStyle.FixedSingle };
+            pnlRight.Controls.Add(txtOut); pnlRight.Controls.Add(lblOut);
+
+            split.Panel1.Controls.Add(pnlLeft);
             split.Panel2.Controls.Add(pnlRight);
+
+            // 3. LOGIC XỬ LÝ (GIỮ NGUYÊN)
+            btnConvert.Click += (s, e) =>
+            {
+                string input = txtIn.Text.Trim();
+                if (string.IsNullOrEmpty(input)) return;
+                var lines = input.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+                var results = new List<string>();
+                int mode = cboMode.SelectedIndex;
+
+                try
+                {
+                    if (mode == 0) for (int i = 0; i + 2 < lines.Count; i += 3) results.Add($"{lines[i]}|{lines[i + 1]}|{lines[i + 2]}");
+                    else if (mode == 1) for (int i = 0; i + 2 < lines.Count; i += 3) results.Add($"{lines[i]}\t{lines[i + 1]}\t{lines[i + 2]}");
+                    else if (mode == 2) foreach (var line in lines) results.Add(line.Replace("|", "\t"));
+                    else if (mode == 3) foreach (var line in lines) { var p = line.Split('|'); if (p.Length >= 3) results.Add(p[2]); }
+                    else if (mode == 4) foreach (var line in lines) { var p = line.Split('|'); if (p.Length >= 2) results.Add($"{p[0]}|{p[1]}"); }
+
+                    txtOut.Text = string.Join(Environment.NewLine, results);
+                    SetStatus($"Đã xong: {results.Count} dòng.");
+                }
+                catch (Exception ex) { MessageBox.Show("Lỗi: " + ex.Message); }
+            };
+
+            btnCopy.Click += (s, e) => { if (txtOut.TextLength > 0) { Clipboard.SetText(txtOut.Text); SetStatus("Đã Copy Output."); } };
+
+            // SỰ KIỆN NÚT XÓA
+            btnClear.Click += (s, e) => { txtIn.Clear(); txtOut.Clear(); SetStatus("Đã xóa"); };
+
             page.Controls.Add(split);
+            page.Controls.Add(pnlTop);
         }
 
+        // ==========================================
+        // 2. CÁC HÀM HELPER CHUNG (UI)
+        // ==========================================
+
+        // Helper 1: Tạo nút cho Sidebar (Menu trái)
         private Guna2Button CreateSideButton(string text, Color color)
         {
             return new Guna2Button
             {
                 Text = text,
-                Height = 35,
+                Height = 40,
                 BorderRadius = 4,
                 FillColor = color,
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI Semibold", 9f),
+                Font = new Font("Segoe UI Semibold", 9.5f),
                 Cursor = Cursors.Hand,
-                Margin = new Padding(0, 5, 0, 5)
+                Margin = new Padding(0, 5, 0, 5),
+                TextAlign = HorizontalAlignment.Left,
+                TextOffset = new Point(10, 0)
             };
         }
 
+        // Helper 2: Tạo nút chức năng cho Tab Convert
+        private Guna2Button CreateButton(string text, Color color, int width)
+        {
+            return new Guna2Button
+            {
+                Text = text,
+                FillColor = color,
+                ForeColor = Color.White,
+                Height = 36,
+                Width = width,
+                BorderRadius = 4,
+                Font = new Font("Segoe UI Semibold", 9f),
+                Margin = new Padding(0, 0, 10, 0),
+                Cursor = Cursors.Hand
+            };
+        }
+
+        // Helper 3: Tạo GroupBox cho Dashboard
         private Guna2GroupBox CreateGroupbox(string title)
         {
             return new Guna2GroupBox
             {
                 Text = title,
-                Size = new Size(340, 100)
+                Font = new Font("Segoe UI Semibold", 9.5f),
+                ForeColor = Color.Black,
+                CustomBorderColor = Color.FromArgb(241, 245, 249),
+                CustomBorderThickness = new Padding(0, 35, 0, 0),
+                FillColor = Color.White,
+                BorderColor = Color.FromArgb(226, 232, 240),
+                BorderRadius = 6,
+                Width = 340,
+                Margin = new Padding(10)
             };
         }
 
+        // Helper 4: Thêm nút vào GroupBox Dashboard
         private void AddBtn(Guna2GroupBox group, string text, Color color, Action onClick)
         {
             var btn = new Guna2Button
             {
                 Text = text,
                 FillColor = color,
-                ForeColor = Color.White
+                ForeColor = Color.White,
+                Tag = onClick
             };
             btn.Click += (s, e) => onClick();
             group.Controls.Add(btn);
         }
 
+        // Helper 5: Sắp xếp nút trong GroupBox (Responsive)
         private void ReflowCardCompact(Guna2GroupBox card, Color themeColor, FlowLayoutPanel parent)
         {
-            card.Font = new Font("Segoe UI Semibold", 9.5f); card.ForeColor = Color.Black;
-            card.CustomBorderColor = Color.FromArgb(229, 231, 235); card.CustomBorderThickness = new Padding(0, 35, 0, 0);
-            card.FillColor = Color.White; card.BorderColor = Color.FromArgb(229, 231, 235); card.BorderRadius = 6;
-            card.Width = 340; card.Margin = new Padding(8);
             var buttons = card.Controls.OfType<Guna2Button>().ToList();
-            int startY = 45, gap = 8, colWidth = (card.Width - 20 - gap) / 2;
-            for (int i = 0; i < buttons.Count; i++) { var btn = buttons[i]; btn.Height = 36; btn.BorderRadius = 4; btn.Font = new Font("Segoe UI", 9f); if (btn.FillColor == Color.FromArgb(94, 148, 255)) btn.FillColor = themeColor; btn.Location = new Point(10 + (i % 2) * (colWidth + gap), startY + (i / 2) * (36 + gap)); btn.Width = colWidth; }
-            card.Height = startY + (int)Math.Ceiling(buttons.Count / 2.0) * (36 + gap) + 10;
+            int gap = 10, padding = 15, headerHeight = 40, btnHeight = 38;
+            int colWidth = (card.Width - (padding * 2) - gap) / 2;
+
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                var btn = buttons[i];
+                btn.Height = btnHeight;
+                btn.Width = colWidth;
+                btn.BorderRadius = 4;
+                btn.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+                if (btn.FillColor == Color.FromArgb(94, 148, 255)) btn.FillColor = themeColor;
+
+                int row = i / 2;
+                int col = i % 2;
+                int x = padding + (col * (colWidth + gap));
+                int y = headerHeight + padding + (row * (btnHeight + gap));
+                btn.Location = new Point(x, y);
+            }
+            int totalRows = (int)Math.Ceiling(buttons.Count / 2.0);
+            card.Height = headerHeight + padding + (totalRows * (btnHeight + gap)) + 5;
             parent.Controls.Add(card);
         }
+
         #endregion
         private void SaveStorageFileAsync()
         {
@@ -1513,6 +1971,7 @@ namespace ToolAdb
             }
         }
     }
+
     public class NaturalComparer : IComparer<string>
     {
         [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
