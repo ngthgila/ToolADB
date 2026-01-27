@@ -25,22 +25,21 @@ namespace ToolAdb
         private string ApkDir => Path.Combine(BaseDir, "APK");
         private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
-        private const string AliasFile = "devices.json";
+        private string IniFile => Path.Combine(BaseDir, "config", "userdata.ini");
         private string AdbPath => Path.Combine(BaseDir, "adb.exe");
         private object _saveLock = new object();
         private System.Windows.Forms.Timer _inputScanTimer = null!;
         private Panel pnlContent;
         private Guna2TabControl tabControl;
         private CheckedListBox _clbSidebarDevices; // List danh sách thiết bị
+        private bool _isWatcherBusy = false; // Biến này giúp Timer không chạy chồng chéo
 
         // UI Controls
         private Label _lblStatusInfo = null!;
         private Guna2ProgressBar _progressBar = null!;
-
         // Auto Refresh Timer
         private System.Windows.Forms.Timer _deviceWatcherTimer = null!;
         private string _lastDeviceHash = "";
-
         // Tab Auto Login & 2FA
         private TextBox _txtAccountInput = null!;
         private TextBox _txtSecretInput = null!;
@@ -52,11 +51,11 @@ namespace ToolAdb
         private Guna2DataGridView _gridUsed = null!;
         private Guna2TabControl _tabStorage = null!;
         private Label _lblStorageCount = null!;
-
         // Tab Convert
         private TextBox _txtConvertIn = null!;
         private TextBox _txtConvertOut = null!;
-
+        // Thay CheckedListBox bằng Grid cho đẹp
+        private Guna2DataGridView _gridDevices;
         public Form1()
         {
             InitializeComponent();
@@ -145,103 +144,116 @@ namespace ToolAdb
                 BorderRadius = 4,
                 FillColor = c,
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
                 Margin = new Padding(0, 0, 0, 5), // Cách nút dưới 5px
                 Cursor = Cursors.Hand
             };
 
             // 3. Tạo các nút
             var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
-            btnSelectAll.Click += (s, e) => { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, true); };
+            btnSelectAll.Click += (s, e) => {
+                foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = true;
+            };
 
             var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139));
-            btnSelectNone.Click += (s, e) => { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, false); };
+            btnSelectNone.Click += (s, e) => {
+                foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = false;
+            };
 
             var btnRefreshSide = MkSideBtn("Làm mới (Refresh)", Color.FromArgb(16, 185, 129));
             btnRefreshSide.Click += async (s, e) => await ReloadDevices();
 
-            var btnRenameSide = MkSideBtn("Đổi tên thiết bị", Color.FromArgb(245, 158, 11));
+            var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11));
             btnRenameSide.Click += (s, e) => ActionRenameSelected();
 
             // Thêm vào FlowLayout
             flowSideBtns.Controls.AddRange(new Control[] { btnSelectAll, btnSelectNone, btnRefreshSide, btnRenameSide });
 
-            // 4. ListBox Thiết bị
-            _clbSidebarDevices = new CheckedListBox
+            // 4. Bảng Thiết bị (Guna2DataGridView)
+            _gridDevices = new Guna2DataGridView
             {
                 Dock = DockStyle.Fill,
+                BackgroundColor = Color.White,
                 BorderStyle = BorderStyle.None,
-                CheckOnClick = true,
-                Font = new Font("Segoe UI", 10f),
-                IntegralHeight = false
+                CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+
+                // Ẩn tiêu đề cột cho gọn
+                ColumnHeadersVisible = false,
+
+                RowHeadersVisible = false,
+                AllowUserToAddRows = false,
+                AllowUserToResizeRows = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                MultiSelect = true,
+                RowTemplate = { Height = 28 },
+                Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Light,
+                GridColor = Color.FromArgb(231, 229, 255),
+                Cursor = Cursors.Hand
             };
-            // ... (Code tạo _clbSidebarDevices ở bước trước) ...
 
-            // 1. TẠO MENU CHUỘT PHẢI
-            var ctxMenu = new ContextMenuStrip();
-            var itemCopy = ctxMenu.Items.Add("Copy Device ID");
-            var itemRename = ctxMenu.Items.Add("Đổi tên (Rename)");
-            var itemView = ctxMenu.Items.Add("Xem màn hình (Scrcpy)");
+            // Cột 0: Checkbox
+            var colCheck = new DataGridViewCheckBoxColumn
+            {
+                HeaderText = "",
+                Width = 30,
+                TrueValue = true,
+                FalseValue = false,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
 
-            _clbSidebarDevices.ContextMenuStrip = ctxMenu;
+            // Cột 1: Tên thiết bị (Đã bỏ HeaderText)
+            var colName = new DataGridViewTextBoxColumn
+            {
+                HeaderText = "",
+                ReadOnly = true,
+                Width = 180, // Độ rộng cố định
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+            };
+            colName.DefaultCellStyle.Font = new Font("Segoe UI Semibold", 9f);
+            colName.DefaultCellStyle.ForeColor = Color.FromArgb(51, 65, 85);
 
-            // Xử lý khi chuột phải: Tự động chọn dòng đang trỏ vào
-            _clbSidebarDevices.MouseDown += (s, e) => {
-                if (e.Button == MouseButtons.Right)
+            // Cột 2: ID ẩn
+            var colId = new DataGridViewTextBoxColumn
+            {
+                Visible = false,
+                ReadOnly = true
+            };
+
+            _gridDevices.Columns.AddRange(colCheck, colName, colId);
+
+            // SỰ KIỆN: Click vào dòng là tự tích Checkbox
+            _gridDevices.CellClick += (s, e) => {
+                if (e.RowIndex >= 0)
                 {
-                    int index = _clbSidebarDevices.IndexFromPoint(e.Location);
-                    if (index != ListBox.NoMatches)
-                    {
-                        _clbSidebarDevices.SelectedIndex = index; // Chọn dòng đó
-                    }
+                    var cell = _gridDevices.Rows[e.RowIndex].Cells[0];
+                    bool isChecked = Convert.ToBoolean(cell.Value);
+                    cell.Value = !isChecked;
                 }
             };
 
-            // Logic nút Copy ID
+            // MENU CHUỘT PHẢI (CHỈ CÒN COPY VÀ RENAME)
+            var ctxMenu = new ContextMenuStrip();
+            var itemCopy = ctxMenu.Items.Add("Copy Device ID");
+            var itemRename = ctxMenu.Items.Add("Đổi tên (Rename)");
+            // Đã xóa dòng "Mở QScrcpyPlus" tại đây
+
+            _gridDevices.ContextMenuStrip = ctxMenu;
+
             itemCopy.Click += (s, e) => {
-                if (_clbSidebarDevices.SelectedItem == null) return;
-                string raw = _clbSidebarDevices.SelectedItem.ToString();
-                // Tách lấy ID (Logic giống hàm GetTargetDevices)
-                string id = raw.Contains("(") && raw.EndsWith(")") ? raw.Substring(raw.LastIndexOf('(') + 1).Trim(')') : raw;
+                if (_gridDevices.CurrentRow == null) return;
+                string id = _gridDevices.CurrentRow.Cells[2].Value.ToString();
                 Clipboard.SetText(id);
-                SetStatus($"Đã copy ID: {id}");
+                SetStatus($"Đã copy: {id}");
             };
 
-            // Logic nút Đổi tên
-            itemRename.Click += (s, e) => ActionRenameSelected(); // Gọi lại hàm đổi tên bạn đã có
+            itemRename.Click += (s, e) => ActionRenameSelected();
 
-            // Logic nút Xem màn hình (Click đúp cũng gọi cái này)
-            void OpenScrcpyAction()
-            {
-                if (_clbSidebarDevices.SelectedItem == null) return;
-                string raw = _clbSidebarDevices.SelectedItem.ToString();
-                string id = raw.Contains("(") && raw.EndsWith(")") ? raw.Substring(raw.LastIndexOf('(') + 1).Trim(')') : raw;
+            // Đã xóa sự kiện click của QScrcpyPlus
 
-                // Chạy scrcpy (Giả sử bạn có file scrcpy.exe cùng thư mục)
-                SetStatus($"Đang mở Scrcpy cho {id}...");
-                Task.Run(() => {
-                    try
-                    {
-                        var proc = new Process();
-                        proc.StartInfo.FileName = "scrcpy.exe"; // Hoặc đường dẫn tuyệt đối
-                        proc.StartInfo.Arguments = $"-s {id} --window-title \"{raw}\"";
-                        proc.StartInfo.UseShellExecute = false;
-                        proc.StartInfo.CreateNoWindow = true; // Ẩn Console đen
-                        proc.Start();
-                    }
-                    catch { MessageBox.Show("Không tìm thấy file scrcpy.exe!"); }
-                });
-            }
-
-            itemView.Click += (s, e) => OpenScrcpyAction();
-
-            // 2. SỰ KIỆN CLICK ĐÚP (Double Click) -> Mở màn hình luôn
-            _clbSidebarDevices.DoubleClick += (s, e) => OpenScrcpyAction();
-            // Add vào Sidebar
             pnlSidebar.Controls.Add(lblSideTitle);
-            pnlSidebar.Controls.Add(flowSideBtns); // Nút nằm đáy
-            pnlSidebar.Controls.Add(_clbSidebarDevices); // List nằm giữa
-            _clbSidebarDevices.BringToFront();
+            pnlSidebar.Controls.Add(flowSideBtns);
+            pnlSidebar.Controls.Add(_gridDevices);
+            _gridDevices.BringToFront();
 
             // 2. CONTENT (BÊN PHẢI)
             // Gán vào biến toàn cục (không dùng var)
@@ -426,17 +438,42 @@ namespace ToolAdb
         // ==========================================
         private void DeviceWatcher_Tick(object? sender, EventArgs e)
         {
+            // Nếu lượt quét trước chưa xong thì bỏ qua lượt này (Tránh treo tool)
+            if (_isWatcherBusy) return;
+
+            _isWatcherBusy = true;
+
             Task.Run(() => {
-                var currentIds = GetAdbDeviceIds();
-                currentIds.Sort();
-                string currentHash = string.Join(",", currentIds);
-                if (currentHash != _lastDeviceHash)
+                try
                 {
-                    _lastDeviceHash = currentHash;
-                    Invoke(new Action(() => {
-                        RefreshDeviceList();
-                        SetStatus($"Tìm Thấy: {currentIds.Count} Tổng.");
-                    }));
+                    // Lấy danh sách ID hiện tại
+                    var currentIds = GetAdbDeviceIds();
+
+                    // Sắp xếp để so sánh chính xác (Máy A,B giống Máy B,A)
+                    currentIds.Sort();
+                    string currentHash = string.Join(",", currentIds);
+
+                    // So sánh với danh sách cũ
+                    if (currentHash != _lastDeviceHash)
+                    {
+                        // Có sự thay đổi (Cắm thêm HOẶC Rút ra)
+                        _lastDeviceHash = currentHash;
+
+                        // Cập nhật giao diện
+                        if (IsHandleCreated && !Disposing)
+                        {
+                            Invoke(new Action(() => {
+                                // Gọi hàm Refresh nhưng không cần await để tránh block UI
+                                _ = ReloadDevices();
+                                SetStatus($"Phát hiện thay đổi: {currentIds.Count} thiết bị.");
+                            }));
+                        }
+                    }
+                }
+                catch { }
+                finally
+                {
+                    _isWatcherBusy = false; // Mở khóa cho lượt quét sau
                 }
             });
         }
@@ -1156,74 +1193,59 @@ namespace ToolAdb
         // 1. Hàm Refresh danh sách thiết bị
         private async Task ReloadDevices()
         {
-            if (_clbSidebarDevices == null) return;
+            if (_gridDevices == null) return;
+            SetStatus("Đang quét...");
 
-            SetStatus("Đang quét thiết bị...");
-            _clbSidebarDevices.Items.Clear(); // Xóa danh sách cũ
+            // Nạp tên từ userdata.ini
+            LoadDeviceNames();
 
-            // Chạy lệnh adb devices (Giả lập logic lấy thiết bị)
-            // Lưu ý: Bạn thay thế logic này bằng hàm GetDevices thực tế của bạn
-            var devices = await Task.Run(() => GetTargetDevices());
+            var deviceIds = await Task.Run(() => GetAdbDeviceIds());
 
-            if (devices != null && devices.Count > 0)
-            {
-                foreach (var d in devices)
+            // Dùng Invoke để thao tác UI an toàn
+            _gridDevices.Invoke((MethodInvoker)delegate {
+                _gridDevices.Rows.Clear();
+                foreach (var id in deviceIds)
                 {
-                    _clbSidebarDevices.Items.Add(d, true); // Mặc định check true
-                }
-                SetStatus($"Tìm thấy {devices.Count} thiết bị.");
-            }
-            else
-            {
-                SetStatus("Không tìm thấy thiết bị nào.");
-            }
-        }
+                    string display = id;
+                    if (_deviceNameById.ContainsKey(id))
+                        display = $"{_deviceNameById[id]} ({id})";
 
+                    // Thêm dòng: [Checkbox=False], [Tên hiển thị], [ID ẩn]
+                    _gridDevices.Rows.Add(false, display, id);
+                }
+            });
+            SetStatus($"Tìm thấy {deviceIds.Count} máy.");
+        }
+    
         // 2. Hàm Đổi tên thiết bị (Ví dụ cơ bản)
         private void ActionRenameSelected()
         {
-            // 1. Kiểm tra có chọn thiết bị chưa
-            if (_clbSidebarDevices.CheckedItems.Count == 0)
+            var targets = GetTargetDevices();
+            if (targets.Count == 0) { MessageBox.Show("Chưa chọn máy nào!"); return; }
+
+            string prefix = ShowInputDialog("Nhập tên gốc (Ví dụ: Máy):", "Đổi tên");
+            if (string.IsNullOrWhiteSpace(prefix)) return;
+
+            int count = 1;
+            foreach (DataGridViewRow row in _gridDevices.Rows)
             {
-                MessageBox.Show("Vui lòng tích chọn các thiết bị muốn đặt tên!");
-                return;
-            }
-
-            // 2. Hiện hộp thoại nhập "Tên gốc" (Prefix)
-            // Ví dụ nhập: "Máy" -> Sẽ ra Máy 1, Máy 2...
-            // Ví dụ nhập: "Acc" -> Sẽ ra Acc 1, Acc 2...
-            string prefixName = ShowInputDialog("Nhập tên gốc để đánh số tự động (Ví dụ: Máy):", "Đổi tên hiển thị");
-
-            // Nếu người dùng ấn Cancel hoặc để trống thì thôi
-            if (string.IsNullOrWhiteSpace(prefixName)) return;
-
-            // 3. Xử lý đổi tên hàng loạt
-            // Dùng List tạm để lưu vị trí các dòng đang chọn
-            var checkedIndices = _clbSidebarDevices.CheckedIndices.Cast<int>().ToList();
-
-            int count = 1; // Bắt đầu đếm từ 1
-
-            foreach (int index in checkedIndices)
-            {
-                // Lấy nội dung cũ
-                string oldText = _clbSidebarDevices.Items[index].ToString();
-
-                // Bóc tách lấy Device ID thực sự
-                // Logic: Nếu đang là "Tên Cũ (ID123)" -> Lấy ID123. Nếu là "ID123" -> Lấy nguyên.
-                string realId = oldText;
-                if (oldText.Contains("(") && oldText.EndsWith(")"))
+                // Chỉ đổi tên những dòng được tích
+                if (Convert.ToBoolean(row.Cells[0].Value))
                 {
-                    realId = oldText.Substring(oldText.LastIndexOf('(') + 1).Trim(')');
+                    string realId = row.Cells[2].Value.ToString();
+                    string newName = $"{prefix} {count}";
+
+                    // 1. Cập nhật bộ nhớ
+                    _deviceNameById[realId] = newName;
+
+                    // 2. Cập nhật giao diện (Cột 1)
+                    row.Cells[1].Value = $"{newName} ({realId})";
+
+                    count++;
                 }
-
-                // Tạo tên mới theo định dạng: "Tên_Gốc Số_Thứ_Tự (Real_ID)"
-                string newDisplayName = $"{prefixName} {count} ({realId})";
-
-                // Cập nhật lại vào ListBox
-                _clbSidebarDevices.Items[index] = newDisplayName;
-
-                count++; // Tăng số thứ tự cho máy tiếp theo
             }
+            // 3. Lưu xuống file userdata.ini
+            SaveDeviceNames();
         }
 
         // --- HÀM HỖ TRỢ: TẠO HỘP THOẠI NHẬP LIỆU (KHÔNG CẦN THƯ VIỆN NGOÀI) ---
@@ -1284,94 +1306,61 @@ namespace ToolAdb
             catch { }
             finally { try { Directory.Delete(tmp, true); } catch { } }
         }
-
-        private void RenameSelectedDevice() { var t = GetTargetDevices(); if (t.Count != 1) { MessageBox.Show("Chọn 1 máy thôi."); return; } var id = t[0]; _deviceNameById.TryGetValue(id, out var old); string inp = Microsoft.VisualBasic.Interaction.InputBox("Tên mới:", "Đổi tên", old ?? ""); if (!string.IsNullOrWhiteSpace(inp)) { _deviceNameById[id] = inp; SaveDeviceNames(); RefreshDeviceList(); } }
         private async Task ActionPushFile() { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } using var d = new OpenFileDialog { Title = "Chọn file" }; if (d.ShowDialog() == DialogResult.OK) { StartProgress(); SetStatus($"Đang gửi file..."); await Task.Run(() => Parallel.ForEach(t, id => RunAdbWaitNoCapture(id, "push", d.FileName, "/sdcard/Download/"))); StopProgress(); MessageBox.Show("Gửi file xong."); } }
         private async Task ActionRunAdbOnSelectedAsync(string name, string cmd) { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } SetStatus($"Running {name}..."); StartProgress(); await Task.Run(() => Parallel.ForEach(t, id => RunAdbNoWait($"-s {id} {cmd}"))); StopProgress(); SetStatus($"Done {name}"); }
 
-        private void RefreshDeviceList()
+        private async void RefreshDeviceList()
         {
+            // Kiểm tra Grid đã được khởi tạo chưa để tránh lỗi Null
+            if (_gridDevices == null || this.Disposing || this.IsDisposed) return;
+
+            // 1. Nạp tên từ file cấu hình (userdata.ini)
             LoadDeviceNames();
-            var currentChecked = GetTargetDevices();
 
-            _clbSidebarDevices.Items.Clear();
+            // 2. Lấy danh sách ID thật từ ADB
+            // (Chạy luồng riêng để không đơ giao diện)
+            var deviceIds = await Task.Run(() => GetAdbDeviceIds());
 
-            // 1. Lấy danh sách ID
-            var rawIds = GetAdbDeviceIds();
-
-            // 2. Tạo danh sách tạm chứa ID và Tên hiển thị
-            // Dùng NaturalComparer để so sánh trực tiếp tên hiển thị
-            var items = rawIds.Select(id =>
+            // 3. Cập nhật vào Grid (Dùng Invoke để an toàn)
+            if (this.IsHandleCreated)
             {
-                _deviceNameById.TryGetValue(id, out var name);
-
-                // Nếu có tên thì hiển thị tên, nếu không thì hiển thị ID
-                // Logic hiển thị: "Tên (ID)" hoặc "ID"
-                string displayLabel = string.IsNullOrEmpty(name) ? id : $"{name} ({id})";
-
-                // Trả về object chứa thông tin cần thiết
-                return new { Id = id, Display = displayLabel };
-            }).ToList();
-
-            // 3. Sắp xếp danh sách bằng NaturalComparer
-            // Lúc này "Máy 2" sẽ được hiểu là nhỏ hơn "Máy 10"
-            var sorter = new NaturalComparer();
-            var sortedItems = items.OrderBy(x => x.Display, sorter).ToList();
-
-            // 4. Đưa lên giao diện
-            foreach (var item in sortedItems)
-            {
-                _clbSidebarDevices.Items.Add(item.Display, currentChecked.Contains(item.Id));
-            }
-
-            SetStatus($"Tìm thấy {_clbSidebarDevices.Items.Count} thiết bị.");
-        }
-
-        private void ToggleSidebarSelection(bool check) { for (int i = 0; i < _clbSidebarDevices.Items.Count; i++) _clbSidebarDevices.SetItemChecked(i, check); }
-        private List<string> GetTargetDevices()
-        {
-            // 1. Chống Crash: Nếu ListBox chưa tạo xong thì trả về danh sách rỗng
-            if (_clbSidebarDevices == null) return new List<string>();
-
-            // 2. Chống lỗi Cross-thread (Rất quan trọng): 
-            // Nếu hàm này bị gọi từ luồng chạy ngầm (Task.Run), nó sẽ tự nhờ UI Thread lấy hộ
-            if (_clbSidebarDevices.InvokeRequired)
-            {
-                return (List<string>)_clbSidebarDevices.Invoke(new Func<List<string>>(() => GetTargetDevices()));
-            }
-
-            var list = new List<string>();
-
-            // 3. Lấy dữ liệu an toàn
-            foreach (var item in _clbSidebarDevices.CheckedItems)
-            {
-                if (item == null) continue;
-
-                var s = item.ToString();
-                if (string.IsNullOrEmpty(s)) continue;
-
-                // Logic tách ID: "Samsung S10 (zyx123)" -> Lấy "zyx123"
-                if (s.Contains("(") && s.EndsWith(")"))
+                this.Invoke(new Action(() =>
                 {
                     try
                     {
-                        int lastOpen = s.LastIndexOf('(');
-                        string id = s.Substring(lastOpen + 1).Trim(')');
-                        list.Add(id);
-                    }
-                    catch
-                    {
-                        list.Add(s); // Nếu lỗi tách chuỗi thì lấy nguyên gốc
-                    }
-                }
-                else
-                {
-                    list.Add(s);
-                }
-            }
+                        // Lưu lại các ID đang được tích chọn hiện tại để tích lại sau khi refresh
+                        var currentChecked = new HashSet<string>();
+                        foreach (DataGridViewRow row in _gridDevices.Rows)
+                        {
+                            if (Convert.ToBoolean(row.Cells[0].Value))
+                                currentChecked.Add(row.Cells[2].Value?.ToString() ?? "");
+                        }
 
-            return list;
+                        _gridDevices.Rows.Clear();
+
+                        foreach (var id in deviceIds)
+                        {
+                            string display = id;
+                            // Nếu có tên trong file INI thì hiển thị: Tên (ID)
+                            if (_deviceNameById.ContainsKey(id))
+                            {
+                                display = $"{_deviceNameById[id]} ({id})";
+                            }
+
+                            // Kiểm tra xem máy này trước đó có được chọn không
+                            bool isChecked = currentChecked.Contains(id);
+
+                            // Thêm dòng vào Grid: [Checkbox], [Tên hiển thị], [ID ẩn]
+                            _gridDevices.Rows.Add(isChecked, display, id);
+                        }
+
+                        SetStatus($"Tìm thấy {deviceIds.Count} thiết bị.");
+                    }
+                    catch { }
+                }));
+            }
         }
+
         private void RunBat(string bat, string args = "") { var p = Path.Combine(BaseDir, bat); if (!File.Exists(p)) { MessageBox.Show("Missing: " + p); return; } Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"\"{p}\" {args}\"", UseShellExecute = false, CreateNoWindow = false, WorkingDirectory = BaseDir }); }
 
         private void ValidateAdbExists() { if (!File.Exists(AdbPath)) MessageBox.Show("Thiếu adb.exe trong thư mục tool: " + AdbPath); }
@@ -1381,9 +1370,113 @@ namespace ToolAdb
         private string RunProcessReturnOutput(string exe, string args) { try { var p = new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 }; using var proc = Process.Start(p); string output = proc.StandardOutput.ReadToEnd(); proc.WaitForExit(); return output; } catch { return ""; } }
         private int RunProcessWaitNoCapture(string f, IEnumerable<string> a, string w = null) { var p = new ProcessStartInfo { FileName = f, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = w ?? BaseDir }; foreach (var x in a) p.ArgumentList.Add(x); var proc = Process.Start(p); proc.WaitForExit(); return proc.ExitCode; }
         private List<string> GetAdbDeviceIds() { try { var p = Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = "devices", UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true }); var o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Split('\n').Where(l => l.Contains("\tdevice")).Select(l => l.Split('\t')[0]).ToList(); } catch { return new List<string>(); } }
-        private void LoadDeviceNames() { _deviceNameById.Clear(); try { if (File.Exists("devices.json")) { var d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText("devices.json")); foreach (var k in d) _deviceNameById[k.Key] = k.Value; } } catch { } }
-        private void SaveDeviceNames() { try { File.WriteAllText("devices.json", JsonSerializer.Serialize(_deviceNameById)); } catch { } }
+        // 1. ĐỌC FILE INI (Lấy NickName, bỏ qua WindowRect)
+        private void LoadDeviceNames()
+        {
+            _deviceNameById.Clear();
+            try
+            {
+                if (!File.Exists(IniFile)) return;
 
+                var lines = File.ReadAllLines(IniFile);
+                string currentSection = "";
+
+                foreach (var line in lines)
+                {
+                    string trim = line.Trim();
+                    // Phát hiện Section ID: [DeviceID]
+                    if (trim.StartsWith("[") && trim.EndsWith("]"))
+                    {
+                        currentSection = trim.Substring(1, trim.Length - 2);
+                    }
+                    // Phát hiện dòng NickName
+                    else if (trim.StartsWith("NickName="))
+                    {
+                        if (!string.IsNullOrEmpty(currentSection))
+                        {
+                            var name = trim.Substring("NickName=".Length).Trim();
+                            if (!string.IsNullOrEmpty(name))
+                            {
+                                _deviceNameById[currentSection] = name;
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // 2. GHI FILE INI (Chỉ sửa NickName, GIỮ NGUYÊN WindowRect)
+        private void SaveDeviceNames()
+        {
+            try
+            {
+                // Tạo thư mục config nếu chưa có
+                string dir = Path.GetDirectoryName(IniFile);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                // Đọc nội dung cũ lên để sửa (tránh mất các dòng WindowRect)
+                List<string> lines = new List<string>();
+                if (File.Exists(IniFile)) lines = File.ReadAllLines(IniFile).ToList();
+
+                // Duyệt qua các máy cần lưu tên
+                foreach (var kvp in _deviceNameById)
+                {
+                    string id = kvp.Key;
+                    string name = kvp.Value;
+                    string sectionHeader = $"[{id}]";
+                    string nickNameLine = $"NickName={name}";
+
+                    // Tìm xem ID này đã có trong file chưa
+                    int sectionIndex = -1;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        if (lines[i].Trim() == sectionHeader)
+                        {
+                            sectionIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (sectionIndex != -1)
+                    {
+                        // -- ĐÃ CÓ MÁY NÀY --
+                        // Tìm dòng NickName bên dưới để sửa
+                        bool foundNick = false;
+                        for (int i = sectionIndex + 1; i < lines.Count; i++)
+                        {
+                            string l = lines[i].Trim();
+                            if (l.StartsWith("[")) break; // Sang máy khác rồi -> Dừng
+
+                            if (l.StartsWith("NickName="))
+                            {
+                                lines[i] = nickNameLine; // Ghi đè tên mới
+                                foundNick = true;
+                                break;
+                            }
+                        }
+                        // Nếu có Section mà chưa có dòng NickName -> Chèn vào
+                        if (!foundNick) lines.Insert(sectionIndex + 1, nickNameLine);
+                    }
+                    else
+                    {
+                        // -- CHƯA CÓ MÁY NÀY --
+                        // Thêm mới xuống cuối file (Kèm các thông số mặc định)
+                        if (lines.Count > 0 && lines.Last() != "") lines.Add("");
+                        lines.Add(sectionHeader);
+                        lines.Add("WindowRectX=100"); // Tọa độ mặc định
+                        lines.Add("WindowRectY=100");
+                        lines.Add("WindowRectW=258");
+                        lines.Add("WindowRectH=528");
+                        lines.Add(nickNameLine); // Dòng tên
+                    }
+                }
+
+                // Ghi lại xuống đĩa
+                File.WriteAllLines(IniFile, lines);
+            }
+            catch { }
+        }
 
         // --- CẬP NHẬT TRẠNG THÁI LÊN TIÊU ĐỀ CỬA SỔ ---
 
@@ -1969,6 +2062,27 @@ namespace ToolAdb
                 // Thông báo
                 SetStatus($"Đã tách {newSecretLines.Count} mã 2FA từ Google Sheet/Text.");
             }
+        }
+
+        // Hàm lấy danh sách thiết bị đang chọn từ bảng _gridDevices
+        private List<string> GetTargetDevices()
+        {
+            var list = new List<string>();
+            if (_gridDevices == null) return list;
+
+            if (_gridDevices.InvokeRequired)
+                return (List<string>)_gridDevices.Invoke(new Func<List<string>>(() => GetTargetDevices()));
+
+            foreach (DataGridViewRow row in _gridDevices.Rows)
+            {
+                // Cột 0 là Checkbox. Nếu True -> Lấy ID ở cột 2
+                if (Convert.ToBoolean(row.Cells[0].Value))
+                {
+                    string id = row.Cells[2].Value?.ToString() ?? "";
+                    if (!string.IsNullOrEmpty(id)) list.Add(id);
+                }
+            }
+            return list;
         }
     }
 
