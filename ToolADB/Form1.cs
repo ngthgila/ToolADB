@@ -33,7 +33,7 @@ namespace ToolAdb
         private Guna2TabControl tabControl;
         private CheckedListBox _clbSidebarDevices; // List danh sách thiết bị
 
-        // UI Controls (Null Forgiving)
+        // UI Controls
         private Label _lblStatusInfo = null!;
         private Guna2ProgressBar _progressBar = null!;
 
