@@ -10,13 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Remove="icon.ico" />
+    <Compile Remove="Add\**\*.cs" />
+    <None Update="adb.exe;AdbWinApi.dll;AdbWinUsbApi.dll;APK\**\*.apk"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="icon.ico">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
+    <None Remove="icon.ico" />
   </ItemGroup>
 
   <ItemGroup>

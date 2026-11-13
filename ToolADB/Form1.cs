@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -12,6 +12,10 @@ using System.Threading;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Guna.UI2.WinForms;
+using ToolAdb.Features.GeoSpoof;
+using ToolAdb.Features.Picsart;
+using ToolAdb.Infrastructure;
+using static ToolAdb.UI.DashboardCards;
 
 namespace ToolAdb
 {
@@ -21,25 +25,28 @@ namespace ToolAdb
         // 1. CẤU HÌNH & BIẾN
         // ==========================================
         private Dictionary<string, string> _deviceNameById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        private string BaseDir => AppDomain.CurrentDomain.BaseDirectory;
-        private string ApkDir => Path.Combine(BaseDir, "APK");
+        private string BaseDir { get; } =
+            string.Equals(Path.GetFileName(Environment.ProcessPath), "dotnet.exe", StringComparison.OrdinalIgnoreCase)
+                ? AppContext.BaseDirectory
+                : Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
+        private string ApkDir => Path.Combine(AppContext.BaseDirectory, "APK");
         private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
         private string IniFile => Path.Combine(BaseDir, "config", "userdata.ini");
-        private string AdbPath => Path.Combine(BaseDir, "adb.exe");
+        private readonly AdbClient _adb;
         private object _saveLock = new object();
         private System.Windows.Forms.Timer _inputScanTimer = null!;
         private Panel pnlContent;
         private Guna2TabControl tabControl;
         private CheckedListBox _clbSidebarDevices; // List danh sách thiết bị
-        private bool _isWatcherBusy = false; // Biến này giúp Timer không chạy chồng chéo
+        private bool _isWatcherBusy; // Biến này giúp Timer không chạy chồng chéo
 
         // UI Controls
         private Label _lblStatusInfo = null!;
         private Guna2ProgressBar _progressBar = null!;
         // Auto Refresh Timer
         private System.Windows.Forms.Timer _deviceWatcherTimer = null!;
-        private string _lastDeviceHash = "";
+        private List<string> _displayedDeviceIds;
         // Tab Auto Login & 2FA
         private TextBox _txtAccountInput = null!;
         private TextBox _txtSecretInput = null!;
@@ -51,14 +58,16 @@ namespace ToolAdb
         private Guna2DataGridView _gridUsed = null!;
         private Guna2TabControl _tabStorage = null!;
         private Label _lblStorageCount = null!;
-        // Tab Convert
-        private TextBox _txtConvertIn = null!;
-        private TextBox _txtConvertOut = null!;
         // Thay CheckedListBox bằng Grid cho đẹp
         private Guna2DataGridView _gridDevices;
+        private RichTextBox _txtMagiskLog = null!;
+        private Guna2Button _btnMagiskPhase1 = null!;
+        private Guna2Button _btnMagiskPhase2 = null!;
+        private const int MagiskMaxWorkers = 5;
         public Form1()
         {
             InitializeComponent();
+            _adb = new AdbClient(AppContext.BaseDirectory);
             // --- THÊM ĐOẠN NÀY ĐỂ HIỆN ICON TRÊN TASKBAR & TIÊU ĐỀ ---
             try
             {
@@ -75,19 +84,19 @@ namespace ToolAdb
             BuildModernLayout();
             ValidateAdbExists();
             TryWarmAdbServer();
-            RefreshDeviceList();
+            Shown += async (s, e) => await ReloadDevices();
 
             // Timer 2FA (1s)
-            _totpTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _totpTimer = new System.Windows.Forms.Timer(components) { Interval = 1000 };
             _totpTimer.Tick += (s, e) => Update2FaGridCodes();
             _totpTimer.Start();
 
             // Timer Auto Detect Devices (3s)
-            _deviceWatcherTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _deviceWatcherTimer = new System.Windows.Forms.Timer(components) { Interval = 3000 };
             _deviceWatcherTimer.Tick += DeviceWatcher_Tick;
             _deviceWatcherTimer.Start();
             // Timer quét Input (Delay 500ms để không làm phiền khi đang gõ)
-            _inputScanTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            _inputScanTimer = new System.Windows.Forms.Timer(components) { Interval = 500 };
             _inputScanTimer.Tick += (s, e) => ScanInputFor2Fa();
         }
 
@@ -190,6 +199,11 @@ namespace ToolAdb
                 GridColor = Color.FromArgb(231, 229, 255),
                 Cursor = Cursors.Hand
             };
+            _gridDevices.CurrentCellDirtyStateChanged += (s, e) =>
+            {
+                if (_gridDevices.IsCurrentCellDirty && _gridDevices.CurrentCell is DataGridViewCheckBoxCell)
+                    _gridDevices.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            };
 
             // Cột 0: Checkbox
             var colCheck = new DataGridViewCheckBoxColumn
@@ -272,17 +286,15 @@ namespace ToolAdb
             };
             pnlContent.Controls.Add(tabControl);
 
-            // Thêm tabControl vào panel
-            pnlContent.Controls.Add(tabControl);
-
             // TAB 1: DASHBOARD
             var tabDash = new TabPage { Text = "Dashboard", BackColor = Color.FromArgb(248, 250, 252) };
             var flowDash = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(15), FlowDirection = FlowDirection.LeftToRight };
 
             var cardSetup = CreateGroupbox("Thiết lập & Cài đặt");
             AddBtn(cardSetup, "Setup Android (All)", Color.FromArgb(16, 185, 129), async () => await ActionSetupAll());
-            AddBtn(cardSetup, "Cài File .APKM", Color.FromArgb(16, 185, 129), async () => await ActionInstallApkmFileDialog());
             AddBtn(cardSetup, "Gửi File vào máy", Color.FromArgb(16, 185, 129), async () => await ActionPushFile());
+            AddBtn(cardSetup, "Cài File .APK", Color.FromArgb(16, 185, 129), async () => await ActionInstallApkFileDialog());
+            AddBtn(cardSetup, "Cài File .APKM", Color.FromArgb(16, 185, 129), async () => await ActionInstallApkmFileDialog());
             AddBtn(cardSetup, "Mở Sync Settings", Color.FromArgb(219, 39, 119), async () => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS"));
             ReflowCardCompact(cardSetup, Color.FromArgb(16, 185, 129), flowDash);
 
@@ -331,7 +343,10 @@ namespace ToolAdb
             });
             AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), async () => await ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
             AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), async () => await ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
+            AddBtn(cardSystem, "Reboot To Sideload", Color.FromArgb(234, 88, 12), async () => await ActionRunAdbOnSelectedAsync("Sideload", "reboot sideload"));
+            AddBtn(cardSystem, "Flash ZIP Sideload", Color.FromArgb(239, 68, 68), async () => await ActionFlashZipSideload());
             AddBtn(cardSystem, "⚡ Restart ADB Server", Color.FromArgb(71, 85, 105), async () => await ActionRestartAdb());
+            AddBtn(cardSystem, "🔥 Hot Reset", Color.FromArgb(220, 38, 38), async () => await ActionHotReset());
             AddBtn(cardSystem, "WIPE ALL DEVICE", Color.FromArgb(220, 38, 38), () => {
                 if (Confirm("CẢNH BÁO: WIPE SẠCH DỮ LIỆU TẤT CẢ MÁY?")) RunBat(@"bat\ResetMayAll.bat");
             });
@@ -345,14 +360,8 @@ namespace ToolAdb
             BuildAutoLoginTab(tabLogin);
             tabControl.TabPages.Add(tabLogin);
 
-            // TAB 3: CHUYỂN ĐỔI
-            var tabConvert = new TabPage { Text = "Công cụ Text", BackColor = Color.White };
-            BuildConvertTab(tabConvert);
-            tabControl.TabPages.Add(tabConvert);
-
-            pnlContent.Controls.Add(tabControl);
-
-            pnlContent.Controls.Add(tabControl);
+            tabControl.TabPages.Add(new GeoSpoofTab(_adb, GetTargetDevices, SetStatus, StartProgress, StopProgress));
+            tabControl.TabPages.Add(new PicsartTab(new PicsartService(_adb), GetTargetDevices));
 
             // Chỉ cần thêm thẳng giao diện chính vào Form
             this.Controls.Add(splitMain);
@@ -365,7 +374,7 @@ namespace ToolAdb
         // ==========================================
         private async Task ActionSetupAll()
         {
-            var targets = GetAdbDeviceIds();
+            var targets = await Task.Run(GetAdbDeviceIds);
             if (targets.Count == 0) { MessageBox.Show("Không tìm thấy thiết bị nào!"); return; }
             if (!Confirm($"Bắt đầu Setup {targets.Count} máy (Batch 4)?")) return;
 
@@ -377,7 +386,7 @@ namespace ToolAdb
                 if (Directory.Exists(ApkDir))
                 {
                     foreach (var f in Directory.GetFiles(ApkDir, "*.apk"))
-                        RunProcessWaitNoCapture(AdbPath, new[] { "-s", id, "install-multiple", "-i", "com.android.vending", f });
+                        _adb.Run(new[] { "-s", id, "install-multiple", "-i", "com.android.vending", f });
                     foreach (var folder in Directory.GetDirectories(ApkDir, "*_apkm"))
                         InstallSplitApksFromFolder(id, folder);
                 }
@@ -387,18 +396,18 @@ namespace ToolAdb
                                    "settings put global development_settings_enabled 1; " +
                                    "settings put global stay_on_while_plugged_in 3; " +
                                    "settings put secure ui_night_mode 1";
-                RunAdbWaitNoCapture(id, "shell", cmdConfig);
+                _adb.RunOnDevice(id, "shell", cmdConfig);
 
                 SetDpiTo411dp(id);
 
                 SetStatus($"Rebooting {id}...");
-                RunAdbWaitNoCapture(id, "reboot");
+                _adb.RunOnDevice(id, "reboot");
             }));
 
             StopProgress();
             SetStatus("Setup Commands Sent!");
             MessageBox.Show($"Đã gửi lệnh Setup + Reboot cho {targets.Count} thiết bị.");
-            RefreshDeviceList();
+            await ReloadDevices();
         }
 
         private void InstallSplitApksFromFolder(string deviceId, string folderPath)
@@ -410,7 +419,7 @@ namespace ToolAdb
                 if (apkFiles.Length == 0) return;
                 var args = new List<string> { "-s", deviceId, "install-multiple", "-i", "com.android.vending" };
                 args.AddRange(apkFiles);
-                RunProcessWaitNoCapture(AdbPath, args);
+                _adb.Run(args);
             }
             catch { }
         }
@@ -419,7 +428,7 @@ namespace ToolAdb
         {
             try
             {
-                string output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell wm size");
+                string output = _adb.ReadOutput($"-s {deviceId} shell wm size");
                 var match = Regex.Match(output, @"Physical size:\s*(\d+)x(\d+)");
                 if (match.Success)
                 {
@@ -427,7 +436,7 @@ namespace ToolAdb
                     int h = int.Parse(match.Groups[2].Value);
                     int minPx = Math.Min(w, h);
                     int targetDpi = (int)Math.Round(minPx * 160.0 / 411.0);
-                    RunAdbWaitNoCapture(deviceId, "shell", "wm", "density", targetDpi.ToString());
+                    _adb.RunOnDevice(deviceId, "shell", "wm", "density", targetDpi.ToString());
                 }
             }
             catch { }
@@ -436,46 +445,9 @@ namespace ToolAdb
         // ==========================================
         // 4. AUTO REFRESH
         // ==========================================
-        private void DeviceWatcher_Tick(object? sender, EventArgs e)
+        private async void DeviceWatcher_Tick(object? sender, EventArgs e)
         {
-            // Nếu lượt quét trước chưa xong thì bỏ qua lượt này (Tránh treo tool)
-            if (_isWatcherBusy) return;
-
-            _isWatcherBusy = true;
-
-            Task.Run(() => {
-                try
-                {
-                    // Lấy danh sách ID hiện tại
-                    var currentIds = GetAdbDeviceIds();
-
-                    // Sắp xếp để so sánh chính xác (Máy A,B giống Máy B,A)
-                    currentIds.Sort();
-                    string currentHash = string.Join(",", currentIds);
-
-                    // So sánh với danh sách cũ
-                    if (currentHash != _lastDeviceHash)
-                    {
-                        // Có sự thay đổi (Cắm thêm HOẶC Rút ra)
-                        _lastDeviceHash = currentHash;
-
-                        // Cập nhật giao diện
-                        if (IsHandleCreated && !Disposing)
-                        {
-                            Invoke(new Action(() => {
-                                // Gọi hàm Refresh nhưng không cần await để tránh block UI
-                                _ = ReloadDevices();
-                                SetStatus($"Phát hiện thay đổi: {currentIds.Count} thiết bị.");
-                            }));
-                        }
-                    }
-                }
-                catch { }
-                finally
-                {
-                    _isWatcherBusy = false; // Mở khóa cho lượt quét sau
-                }
-            });
+            await ReloadDevices(automatic: true);
         }
 
         // ==========================================
@@ -612,6 +584,22 @@ namespace ToolAdb
                 // Gọi hàm lấy hàng loạt (đã sửa ở bước trước)
                 TransferAccountsToInput(countToTake);
             };
+
+            // --- NÚT SYNC SETTING ---
+            var btnSyncSetting = new Guna2Button
+            {
+                Text = "⚙",
+                Height = compactH,
+                Width = 45,
+                FillColor = Color.FromArgb(71, 85, 105), // Mau xam dam
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = new Padding(5, 0, 0, 0),
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
+            };
+            btnSyncSetting.Click += async (s, e) => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS");
+
             // --- NÚT XÓA INPUT ---
             var btnClearInput = new Guna2Button
             {
@@ -624,12 +612,12 @@ namespace ToolAdb
                 Margin = new Padding(5, 0, 0, 0),
                 BorderRadius = 5,
                 Cursor = Cursors.Hand
-                // ❌ Đã xóa dòng ToolTipText gây lỗi
             };
 
             // ▼▼▼ THÊM ĐOẠN NÀY ĐỂ TẠO TOOLTIP ▼▼▼
             var tt = new System.Windows.Forms.ToolTip();
             tt.SetToolTip(btnClearInput, "Xóa trắng ô Input và 2FA");
+            tt.SetToolTip(btnSyncSetting, "Mở Sync Settings");
             // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
             // Sự kiện Click (Giữ nguyên)
@@ -647,13 +635,13 @@ namespace ToolAdb
                     SetStatus("Đã dọn dẹp Input.");
                 }
             };
-            // Thêm vào Panel (Thứ tự: Nạp -> Paste -> Label -> Send)
+            // Thêm vào Panel (Thứ tự: Nạp -> Paste -> Label -> Số lượng -> Send -> Xóa)
             pnlStoreAction.Controls.Add(btnLoadAcc);
             pnlStoreAction.Controls.Add(btnImportClipboard);
             pnlStoreAction.Controls.Add(_lblStorageCount);
-            pnlStoreAction.Controls.Add(btnPushToInput);
-            pnlStoreAction.Controls.Add(numTakeCount);   // 1. Ô nhập số
-            pnlStoreAction.Controls.Add(btnPushToInput); // 2. Nút Send
+            pnlStoreAction.Controls.Add(numTakeCount);   // Ô nhập số
+            pnlStoreAction.Controls.Add(btnPushToInput); // Nút Send
+            pnlStoreAction.Controls.Add(btnSyncSetting); // Nút Sync Settings
             pnlStoreAction.Controls.Add(btnClearInput);  // Nút Thùng rác (🗑)
 
             // Add Panel vào Tab
@@ -851,16 +839,70 @@ namespace ToolAdb
             _grid2Fa.Columns.Add(colBtnSend);
             _grid2Fa.CellContentClick += Grid2Fa_CellContentClick;
 
-            // 4. Nút Gửi All (Dock Bottom)
+            // 4. Panel Nút Hành Động (Dock Bottom)
+            var pnlBottomActions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 35,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            pnlBottomActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            pnlBottomActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+
+            var btnCopyAll2Fa = new Guna2Button
+            {
+                Text = "Copy 2FA All",
+                Dock = DockStyle.Fill,
+                FillColor = Color.Teal,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 2, 0)
+            };
+            btnCopyAll2Fa.Click += (s, e) => {
+                var codes = new List<string>();
+                foreach (DataGridViewRow row in _grid2Fa.Rows)
+                {
+                    if (row.Cells[1].Value != null)
+                    {
+                        string code = row.Cells[1].Value.ToString();
+                        if (!string.IsNullOrWhiteSpace(code))
+                        {
+                            int idx = code.IndexOf('(');
+                            if (idx >= 0) code = code.Substring(0, idx).Trim();
+                            else code = code.Trim();
+
+                            if (!string.IsNullOrEmpty(code))
+                            {
+                                codes.Add(code);
+                            }
+                        }
+                    }
+                }
+                if (codes.Count > 0)
+                {
+                    Clipboard.SetText(string.Join(Environment.NewLine, codes));
+                    SetStatus($"Đã copy {codes.Count} mã 2FA.");
+                }
+                else
+                {
+                    SetStatus("Không có mã 2FA nào để copy.");
+                }
+            };
+
             var btnSendAll2Fa = new Guna2Button
             {
                 Text = "Gửi 2FA All",
-                Height = 35,
-                Dock = DockStyle.Bottom,
+                Dock = DockStyle.Fill,
                 FillColor = Color.FromArgb(124, 58, 237),
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold)
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Margin = new Padding(2, 0, 0, 0)
             };
             btnSendAll2Fa.Click += async (s, e) => await ActionSend2FaToAll();
+
+            pnlBottomActions.Controls.Add(btnCopyAll2Fa, 0, 0);
+            pnlBottomActions.Controls.Add(btnSendAll2Fa, 1, 0);
 
             // 5. Tiêu đề (Dock Top)
             var lblTitleRight = new Label { Text = "Quản lý 2FA", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 10f, FontStyle.Bold) };
@@ -879,13 +921,13 @@ namespace ToolAdb
             // Add Title (Dock Top -> Nằm trên cùng)
             pnlRight.Controls.Add(lblTitleRight);
 
-            // Add Button (Dock Bottom -> Nằm dưới cùng)
-            pnlRight.Controls.Add(btnSendAll2Fa);
+            // Add Group Các Nút (Dock Bottom -> Nằm dưới cùng)
+            pnlRight.Controls.Add(pnlBottomActions);
 
             // 7. Thêm Grid vào Grid
             // Đưa các thành phần Dock Fill lên trên để hiển thị đúng
             _grid2Fa.BringToFront();
-            btnSendAll2Fa.SendToBack(); // Đẩy nút xuống dưới
+            pnlBottomActions.SendToBack(); // Đẩy nút xuống dưới
 
             // 8. Add vào giao diện chính
             splitMain.Panel2.Controls.Add(pnlRight);
@@ -930,7 +972,11 @@ namespace ToolAdb
                 // ▼▼▼ YÊU CẦU 3: SỬA LỖI TÔ MÀU (THÊM SELECTION BACKCOLOR) ▼▼▼
                 if (e.ColumnIndex == 2)
                 {
-                    Clipboard.SetText(g.Rows[e.RowIndex].Cells[0].Value?.ToString() ?? "");
+                    if (!TrySetClipboardText(g.Rows[e.RowIndex].Cells[0].Value?.ToString() ?? ""))
+                    {
+                        SetStatus("Clipboard busy, copy Email failed");
+                        return;
+                    }
                     var cell = g.Rows[e.RowIndex].Cells[0];
                     cell.Style.BackColor = Color.FromArgb(220, 252, 231);
                     cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
@@ -938,7 +984,11 @@ namespace ToolAdb
                 }
                 else if (e.ColumnIndex == 3)
                 {
-                    Clipboard.SetText(g.Rows[e.RowIndex].Cells[1].Value?.ToString() ?? "");
+                    if (!TrySetClipboardText(g.Rows[e.RowIndex].Cells[1].Value?.ToString() ?? ""))
+                    {
+                        SetStatus("Clipboard busy, copy Pass failed");
+                        return;
+                    }
                     var cell = g.Rows[e.RowIndex].Cells[1];
                     cell.Style.BackColor = Color.FromArgb(220, 252, 231);
                     cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
@@ -1118,7 +1168,7 @@ namespace ToolAdb
                         // Thêm vào tab "Đã dùng" trên giao diện
                         string email = row.Cells[0].Value?.ToString() ?? "";
                         string pass = row.Cells[1].Value?.ToString() ?? "";
-                        _gridUsed.Rows.Add(email, pass, "Used", DateTime.Now.ToString("HH:mm:ss"));
+                        _gridUsed.Rows.Add(email, pass);
 
                         // Xóa chính xác dòng này khỏi kho (Cực kỳ an toàn)
                         _gridStorage.Rows.Remove(row);
@@ -1158,8 +1208,8 @@ namespace ToolAdb
             SetStatus("Đang quét và tắt ứng dụng (user apps)..."); StartProgress();
             await Task.Run(() => Parallel.ForEach(targets, deviceId =>
             {
-                string output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell pm list packages -3 --user 0");
-                if (string.IsNullOrWhiteSpace(output)) output = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell pm list packages -3");
+                string output = _adb.ReadOutput($"-s {deviceId} shell pm list packages -3 --user 0");
+                if (string.IsNullOrWhiteSpace(output)) output = _adb.ReadOutput($"-s {deviceId} shell pm list packages -3");
                 if (!string.IsNullOrWhiteSpace(output))
                 {
                     var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -1168,11 +1218,11 @@ namespace ToolAdb
                         var pkgLine = line.Trim();
                         if (!pkgLine.StartsWith("package:", StringComparison.OrdinalIgnoreCase)) continue;
                         string pkg = pkgLine.Substring("package:".Length).Trim();
-                        if (!string.IsNullOrWhiteSpace(pkg)) RunAdbWaitNoCapture(deviceId, "shell", "am", "force-stop", pkg);
+                        if (!string.IsNullOrWhiteSpace(pkg)) _adb.RunOnDevice(deviceId, "shell", "am", "force-stop", pkg);
                     }
-                    RunAdbWaitNoCapture(deviceId, "shell", "am", "kill-all");
+                    _adb.RunOnDevice(deviceId, "shell", "am", "kill-all");
                 }
-                else RunAdbWaitNoCapture(deviceId, "shell", "am", "kill-all");
+                else _adb.RunOnDevice(deviceId, "shell", "am", "kill-all");
             }));
             StopProgress(); SetStatus("Đã đóng tất cả User Apps.");
         }
@@ -1181,43 +1231,138 @@ namespace ToolAdb
         {
             SetStatus("Killing ADB Server..."); StartProgress();
             await Task.Run(() => {
-                RunProcessWaitNoCapture(AdbPath, new[] { "kill-server" });
+                _adb.Run(new[] { "kill-server" });
                 Thread.Sleep(1500);
-                RunProcessWaitNoCapture(AdbPath, new[] { "start-server" });
+                _adb.Run(new[] { "start-server" });
             });
-            StopProgress(); SetStatus("ADB Server Restarted."); RefreshDeviceList();
+            StopProgress(); SetStatus("ADB Server Restarted."); await ReloadDevices();
             MessageBox.Show("ADB Server đã khởi động lại.");
         }
+
+        private async Task ActionHotReset()
+        {
+            var targets = GetTargetDevices();
+            if (targets.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
+            if (!Confirm("CẢNH BÁO: Hot Reset sẽ xóa/xóa bộ đệm GMS, GSF, Play Store, hủy Android ID và Accounts. Bạn chắc chắn muốn chạy?")) return;
+
+            SetStatus("Đang thực hiện Hot Reset...");
+            StartProgress();
+
+            string scriptContent = @"#!/system/bin/sh
+
+am broadcast -a com.yurikey.manager.CLEAR_TRACES > /dev/null 2>&1
+sleep 1
+am start -n com.yurikey.manager/.MainActivity --es action clear_all_detection_traces > /dev/null 2>&1
+sleep 2
+am start -n com.yurikey.manager/.MainActivity --es action kill_all > /dev/null 2>&1
+sleep 1
+
+am force-stop com.google.android.gms > /dev/null 2>&1
+am force-stop com.google.android.gsf > /dev/null 2>&1
+am force-stop com.android.vending > /dev/null 2>&1
+killall com.google.android.gms > /dev/null 2>&1
+killall com.google.android.gms.persistent > /dev/null 2>&1
+sleep 1
+
+rm -rf /data/data/com.google.android.gms/*
+rm -rf /data/data/com.google.android.gms/.[^.]*
+rm -rf /data/data/com.google.android.gsf/*
+rm -rf /data/data/com.google.android.gsf/.[^.]*
+rm -rf /data/data/com.android.vending/*
+rm -rf /data/data/com.android.vending/.[^.]*
+
+sqlite3 /data/system/users/0/settings_ssaid.xml ""DELETE FROM main WHERE name='android_id'"" > /dev/null 2>&1
+rm -f /data/system/users/0/settings_ssaid.xml
+
+rm -f /data/system/users/0/accounts.db*
+rm -f /data/system_ce/0/accounts_ce.db*
+rm -f /data/system_de/0/accounts_de.db*
+
+rm -rf /data/misc/keystore/*
+rm -rf /data/misc/keystore/.*
+
+am broadcast -a com.yurikey.manager.CLEAR_TRACES > /dev/null 2>&1
+am start -n com.yurikey.manager/.MainActivity --es action clear_all_detection_traces > /dev/null 2>&1
+sleep 2
+rm -rf /data/data/com.yurikey.manager/*
+rm -rf /sdcard/Android/data/com.yurikey.manager/*
+
+sleep 1
+setprop sys.powerctl reboot
+";
+            string tempScript = Path.Combine(Path.GetTempPath(), "reset.sh");
+            File.WriteAllText(tempScript, scriptContent.Replace("\r\n", "\n"));
+
+            await Task.Run(() => {
+                Parallel.ForEach(targets, deviceId => {
+                    // Bước 1 & 2: Root & Remount
+                    _adb.Run(new[] { "-s", deviceId, "root" });
+                    Thread.Sleep(1500);
+                    _adb.Run(new[] { "-s", deviceId, "remount" });
+                    Thread.Sleep(1500);
+
+                    // Bước 3: Đẩy file
+                    _adb.Run(new[] { "-s", deviceId, "push", tempScript, "/system/bin/reset.sh" });
+
+                    // Bước 4: Sửa lỗi CRLF
+                    _adb.Run(new[] { "-s", deviceId, "shell", "sed -i 's/\\r//g' /system/bin/reset.sh" });
+
+                    // Bước 5 & 6: Cấp quyền và khôi phục nhãn
+                    _adb.Run(new[] { "-s", deviceId, "shell", "chmod 0755 /system/bin/reset.sh" });
+                    _adb.Run(new[] { "-s", deviceId, "shell", "restorecon /system/bin/reset.sh" });
+
+                    // Bước 7: Chạy script
+                    _adb.Run(new[] { "-s", deviceId, "shell", "/system/bin/reset.sh" });
+                });
+            });
+
+            StopProgress();
+            SetStatus("Hot Reset hoàn tất. Chờ thiết bị khởi động lại.");
+            MessageBox.Show($"Lệnh Hot Reset đã được gửi tới {targets.Count} máy.", "Xong");
+        }
+
         // --- CÁC HÀM XỬ LÝ LOGIC CÒN THIẾU ---
 
         // 1. Hàm Refresh danh sách thiết bị
-        private async Task ReloadDevices()
+        private async Task ReloadDevices(bool automatic = false)
         {
-            if (_gridDevices == null) return;
-            SetStatus("Đang quét...");
+            if (_isWatcherBusy || _gridDevices == null || IsDisposed || Disposing) return;
 
-            // Nạp tên từ userdata.ini
-            LoadDeviceNames();
+            _isWatcherBusy = true;
+            try
+            {
+                if (!automatic) SetStatus("Đang quét thiết bị...");
+                var result = await Task.Run(() => _adb.Capture(new[] { "devices" }, timeoutMs: 5000));
+                if (IsDisposed || Disposing) return;
 
-            var deviceIds = await Task.Run(() => GetAdbDeviceIds());
+                if (result.exitCode != 0)
+                {
+                    if (!automatic) SetStatus("Lỗi quét ADB: " + result.stderr.Trim());
+                    return;
+                }
 
-            // Dùng Invoke để thao tác UI an toàn
-            _gridDevices.Invoke((MethodInvoker)delegate {
+                var deviceIds = AdbClient.ParseAdbDevices(result.stdout, "device");
+                if (automatic && _displayedDeviceIds != null &&
+                    _displayedDeviceIds.ToHashSet(StringComparer.Ordinal).SetEquals(deviceIds)) return;
+
+                var checkedIds = GetTargetDevices().ToHashSet(StringComparer.Ordinal);
+                LoadDeviceNames();
                 _gridDevices.Rows.Clear();
                 foreach (var id in deviceIds)
                 {
-                    string display = id;
-                    if (_deviceNameById.ContainsKey(id))
-                        display = $"{_deviceNameById[id]} ({id})";
-
-                    // Thêm dòng: [Checkbox=False], [Tên hiển thị], [ID ẩn]
-                    _gridDevices.Rows.Add(false, display, id);
+                    string display = _deviceNameById.TryGetValue(id, out var name) ? $"{name} ({id})" : id;
+                    _gridDevices.Rows.Add(checkedIds.Contains(id), display, id);
                 }
-            });
-            SetStatus($"Tìm thấy {deviceIds.Count} máy.");
+
+                _displayedDeviceIds = deviceIds;
+                SetStatus($"Tìm thấy {deviceIds.Count} thiết bị.");
+            }
+            finally
+            {
+                _isWatcherBusy = false;
+            }
         }
-    
-        // 2. Hàm Đổi tên thiết bị (Ví dụ cơ bản)
+
         private void ActionRenameSelected()
         {
             var targets = GetTargetDevices();
@@ -1276,6 +1421,23 @@ namespace ToolAdb
 
             return prompt.ShowDialog() == DialogResult.OK ? textBox.Text : "";
         }
+        private async Task ActionInstallApkFileDialog()
+        {
+            var targets = GetTargetDevices();
+            if (targets.Count == 0)
+            {
+                MessageBox.Show("Chưa chọn thiết bị!");
+                return;
+            }
+
+            using var dialog = new OpenFileDialog { Title = "Chọn file APK", Filter = "APK (*.apk)|*.apk" };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+
+            string file = dialog.FileName;
+            await RunAdbFileActionAsync(targets, new[] { "install", "-r", file }, 300000,
+                "Cài APK", "Đang cài APK...", installed => $"Đã cài APK trên {installed}/{targets.Count} thiết bị.");
+        }
+
         private async Task ActionInstallApkmFileDialog()
         {
             var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
@@ -1300,76 +1462,178 @@ namespace ToolAdb
                     var splits = Directory.GetFiles(tmp, "*.apk", SearchOption.AllDirectories).Where(x => !x.EndsWith("base.apk"));
                     var args = new List<string> { "-s", id, "install-multiple", "-r", baseApk };
                     args.AddRange(splits);
-                    RunProcessWaitNoCapture(AdbPath, args);
+                    _adb.Run(args);
                 }
             }
             catch { }
             finally { try { Directory.Delete(tmp, true); } catch { } }
         }
-        private async Task ActionPushFile() { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } using var d = new OpenFileDialog { Title = "Chọn file" }; if (d.ShowDialog() == DialogResult.OK) { StartProgress(); SetStatus($"Đang gửi file..."); await Task.Run(() => Parallel.ForEach(t, id => RunAdbWaitNoCapture(id, "push", d.FileName, "/sdcard/Download/"))); StopProgress(); MessageBox.Show("Gửi file xong."); } }
-        private async Task ActionRunAdbOnSelectedAsync(string name, string cmd) { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } SetStatus($"Running {name}..."); StartProgress(); await Task.Run(() => Parallel.ForEach(t, id => RunAdbNoWait($"-s {id} {cmd}"))); StopProgress(); SetStatus($"Done {name}"); }
-
-        private async void RefreshDeviceList()
+        private async Task ActionPushFile()
         {
-            // Kiểm tra Grid đã được khởi tạo chưa để tránh lỗi Null
-            if (_gridDevices == null || this.Disposing || this.IsDisposed) return;
-
-            // 1. Nạp tên từ file cấu hình (userdata.ini)
-            LoadDeviceNames();
-
-            // 2. Lấy danh sách ID thật từ ADB
-            // (Chạy luồng riêng để không đơ giao diện)
-            var deviceIds = await Task.Run(() => GetAdbDeviceIds());
-
-            // 3. Cập nhật vào Grid (Dùng Invoke để an toàn)
-            if (this.IsHandleCreated)
+            var targets = GetTargetDevices();
+            if (targets.Count == 0)
             {
-                this.Invoke(new Action(() =>
+                MessageBox.Show("Chưa chọn thiết bị!");
+                return;
+            }
+
+            using var dialog = new OpenFileDialog { Title = "Chọn file" };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+
+            string file = dialog.FileName;
+            await RunAdbFileActionAsync(targets, new[] { "push", file, "/sdcard/Download/" }, 30000,
+                "Gửi file", "Đang gửi file...", sent => $"Đã gửi file đến {sent}/{targets.Count} thiết bị.");
+        }
+
+        private async Task RunAdbFileActionAsync(List<string> targets, string[] args, int timeoutMs,
+            string title, string status, Func<int, string> summarize)
+        {
+            StartProgress();
+            SetStatus(status);
+            try
+            {
+                var failed = await Task.WhenAll(targets.Select(async id =>
                 {
-                    try
-                    {
-                        // Lưu lại các ID đang được tích chọn hiện tại để tích lại sau khi refresh
-                        var currentChecked = new HashSet<string>();
-                        foreach (DataGridViewRow row in _gridDevices.Rows)
-                        {
-                            if (Convert.ToBoolean(row.Cells[0].Value))
-                                currentChecked.Add(row.Cells[2].Value?.ToString() ?? "");
-                        }
+                    var result = await Task.Run(() => _adb.Capture(new[] { "-s", id }.Concat(args), timeoutMs));
+                    if (result.exitCode == 0) return null;
 
-                        _gridDevices.Rows.Clear();
-
-                        foreach (var id in deviceIds)
-                        {
-                            string display = id;
-                            // Nếu có tên trong file INI thì hiển thị: Tên (ID)
-                            if (_deviceNameById.ContainsKey(id))
-                            {
-                                display = $"{_deviceNameById[id]} ({id})";
-                            }
-
-                            // Kiểm tra xem máy này trước đó có được chọn không
-                            bool isChecked = currentChecked.Contains(id);
-
-                            // Thêm dòng vào Grid: [Checkbox], [Tên hiển thị], [ID ẩn]
-                            _gridDevices.Rows.Add(isChecked, display, id);
-                        }
-
-                        SetStatus($"Tìm thấy {deviceIds.Count} thiết bị.");
-                    }
-                    catch { }
+                    string detail = string.IsNullOrWhiteSpace(result.stderr) ? result.stdout : result.stderr;
+                    return string.IsNullOrWhiteSpace(detail) ? $"{id} (mã lỗi {result.exitCode})" : $"{id}: {detail.Trim()}";
                 }));
+
+                var errors = failed.Where(message => message != null).ToArray();
+                string summary = summarize(targets.Count - errors.Length);
+                SetStatus(summary);
+                MessageBox.Show(errors.Length == 0 ? summary : summary + Environment.NewLine + string.Join(Environment.NewLine, errors),
+                    title, MessageBoxButtons.OK, errors.Length == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                StopProgress();
             }
         }
 
+        private async Task ActionRunAdbOnSelectedAsync(string name, string cmd) { var t = GetTargetDevices(); if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; } SetStatus($"Running {name}..."); StartProgress(); await Task.Run(() => Parallel.ForEach(t, id => _adb.Start($"-s {id} {cmd}"))); StopProgress(); SetStatus($"Done {name}"); }
+
+        private async Task ActionFlashZipSideload()
+        {
+            using var dialog = new OpenFileDialog
+            {
+                Title = "Chọn file ZIP để flash qua ADB Sideload",
+                Filter = "Zip Files (*.zip)|*.zip"
+            };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+
+            StartProgress();
+            try
+            {
+                var result = await Task.Run(() => FlashZipSideloadLogic(dialog.FileName));
+                SetStatus(result.message);
+                MessageBox.Show(result.message, result.success ? "Flash ZIP" : "ADB Sideload",
+                    MessageBoxButtons.OK, result.success ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                StopProgress();
+                await ReloadDevices();
+            }
+        }
+
+        private (bool success, string message) FlashZipSideloadLogic(string zipPath)
+        {
+            if (!File.Exists(zipPath))
+                return (false, "Không tìm thấy file ZIP đã chọn.");
+
+            try
+            {
+                SetStatus("Làm mới ADB để nhận thiết bị sideload...");
+                RestartAdbServerSync();
+
+                var sideloadIds = WaitForSideloadDevices(30000);
+                if (sideloadIds.Count == 0)
+                {
+                    return (false, "Không thấy thiết bị nào ở chế độ sideload. Hãy kiểm tra máy đã vào 'Apply update from ADB' chưa.");
+                }
+
+                SetStatus($"Dang kich hoat sideload cho {sideloadIds.Count} may...");
+                foreach (var sideloadId in sideloadIds)
+                {
+                    StartSideloadCommandWindow(sideloadId, zipPath);
+                    Thread.Sleep(1000);
+                }
+
+                return (true, $"Da kich hoat sideload {Path.GetFileName(zipPath)} cho {sideloadIds.Count} may.");
+            }
+            catch (Exception ex)
+            {
+                return (false, "Lỗi flash sideload: " + ex.Message);
+            }
+        }
+
+        private void StartSideloadCommandWindow(string serial, string zipPath)
+        {
+            string title = $"Sideloading - {serial}";
+            string args = $"/c title \"{title}\" && echo Dang xu ly: {serial} && \"{_adb.ExecutablePath}\" -s {serial} sideload \"{zipPath}\" && echo. && echo [XONG - TU DONG DONG SAU 5 GIAY] && timeout /t 5";
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = args,
+                UseShellExecute = false,
+                CreateNoWindow = false,
+                WorkingDirectory = BaseDir
+            });
+        }
+
+        private void RestartAdbServerSync()
+        {
+            _adb.Run(new[] { "kill-server" });
+            Thread.Sleep(1200);
+            _adb.Run(new[] { "start-server" });
+        }
+
+        private List<string> WaitForSideloadDevices(int timeoutMs)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                var sideloadDevices = GetAdbDevicesByState("sideload");
+                if (sideloadDevices.Count > 0)
+                    return sideloadDevices.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+                Thread.Sleep(1000);
+            }
+            return new List<string>();
+        }
+
+        private List<string> GetAdbDevicesByState(string state) =>
+            AdbClient.ParseAdbDevices(_adb.ReadOutput("devices"), state);
+
         private void RunBat(string bat, string args = "") { var p = Path.Combine(BaseDir, bat); if (!File.Exists(p)) { MessageBox.Show("Missing: " + p); return; } Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c \"\"{p}\" {args}\"", UseShellExecute = false, CreateNoWindow = false, WorkingDirectory = BaseDir }); }
 
-        private void ValidateAdbExists() { if (!File.Exists(AdbPath)) MessageBox.Show("Thiếu adb.exe trong thư mục tool: " + AdbPath); }
-        private void TryWarmAdbServer() { try { RunAdbNoWait("start-server"); } catch { } }
-        private void RunAdbNoWait(string args) => Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = args, UseShellExecute = false, CreateNoWindow = true });
-        private int RunAdbWaitNoCapture(string id, params string[] args) { var l = new List<string> { "-s", id }; l.AddRange(args); return RunProcessWaitNoCapture(AdbPath, l); }
-        private string RunProcessReturnOutput(string exe, string args) { try { var p = new ProcessStartInfo { FileName = exe, Arguments = args, UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 }; using var proc = Process.Start(p); string output = proc.StandardOutput.ReadToEnd(); proc.WaitForExit(); return output; } catch { return ""; } }
-        private int RunProcessWaitNoCapture(string f, IEnumerable<string> a, string w = null) { var p = new ProcessStartInfo { FileName = f, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = w ?? BaseDir }; foreach (var x in a) p.ArgumentList.Add(x); var proc = Process.Start(p); proc.WaitForExit(); return proc.ExitCode; }
-        private List<string> GetAdbDeviceIds() { try { var p = Process.Start(new ProcessStartInfo { FileName = AdbPath, Arguments = "devices", UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true }); var o = p.StandardOutput.ReadToEnd(); p.WaitForExit(); return o.Split('\n').Where(l => l.Contains("\tdevice")).Select(l => l.Split('\t')[0]).ToList(); } catch { return new List<string>(); } }
+        private void ValidateAdbExists() { if (!File.Exists(_adb.ExecutablePath)) MessageBox.Show("Thiếu adb.exe trong thư mục tool: " + _adb.ExecutablePath); }
+        private void TryWarmAdbServer() { try { _adb.Start("start-server"); } catch { } }
+        private bool TrySetClipboardText(string text, int timeoutMs = 1200)
+        {
+            bool ok = false;
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    Clipboard.SetDataObject(text ?? "", true, 5, 100);
+                    ok = true;
+                }
+                catch
+                {
+                    ok = false;
+                }
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.IsBackground = true;
+            thread.Start();
+            return thread.Join(timeoutMs) && ok;
+        }
+
+        private List<string> GetAdbDeviceIds() => GetAdbDevicesByState("device");
         // 1. ĐỌC FILE INI (Lấy NickName, bỏ qua WindowRect)
         private void LoadDeviceNames()
         {
@@ -1521,7 +1785,7 @@ namespace ToolAdb
                 var p = ParseLine(l[i]); var txt = isEmail ? p.email : p.pass;
                 if (string.IsNullOrWhiteSpace(txt)) return;
                 EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(30); ImeSendText(id, txt.Trim());
-                Thread.Sleep(80); RunAdbWaitNoCapture(id, "shell", "input", "keyevent", "66");
+                Thread.Sleep(80); _adb.RunOnDevice(id, "shell", "input", "keyevent", "66");
             }));
             StopProgress();
         }
@@ -1546,12 +1810,12 @@ namespace ToolAdb
         private const string AutomationImeB64ExtraKey = "b64";
         private readonly HashSet<string> _imeEnsured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _imeEnsuredLock = new object();
-        private bool IsAutomationImeActive(string deviceId) { var cur = RunProcessReturnOutput(AdbPath, $"-s {deviceId} shell settings get secure default_input_method"); return (cur ?? "").Trim().Equals(AutomationImeId, StringComparison.OrdinalIgnoreCase); }
+        private bool IsAutomationImeActive(string deviceId) { var cur = _adb.ReadOutput($"-s {deviceId} shell settings get secure default_input_method"); return (cur ?? "").Trim().Equals(AutomationImeId, StringComparison.OrdinalIgnoreCase); }
         private void EnsureAutomationIme(string deviceId)
         {
             if (string.IsNullOrWhiteSpace(deviceId)) return;
             lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId) && IsAutomationImeActive(deviceId)) return; }
-            RunAdbWaitNoCapture(deviceId, "shell", "ime", "enable", AutomationImeId); RunAdbWaitNoCapture(deviceId, "shell", "ime", "set", AutomationImeId);
+            _adb.RunOnDevice(deviceId, "shell", "ime", "enable", AutomationImeId); _adb.RunOnDevice(deviceId, "shell", "ime", "set", AutomationImeId);
             lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
         }
         // --- 1. XỬ LÝ ADB & IME ---
@@ -1561,19 +1825,19 @@ namespace ToolAdb
             // Chuyển sang chạy song song (Parallel) để set IME nhanh hơn nếu danh sách nhiều máy
             Parallel.ForEach(deviceIds, id =>
             {
-                RunAdbWaitNoCapture(id, "shell", "ime", "enable", AutomationImeId);
-                RunAdbWaitNoCapture(id, "shell", "ime", "set", AutomationImeId);
+                _adb.RunOnDevice(id, "shell", "ime", "enable", AutomationImeId);
+                _adb.RunOnDevice(id, "shell", "ime", "set", AutomationImeId);
                 lock (_imeEnsuredLock) _imeEnsured.Add(id);
             });
         }
 
         private void ImeClearText(string deviceId) =>
-            RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
+            _adb.RunOnDevice(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
 
         private void ImeSendText(string deviceId, string text)
         {
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? ""));
-            RunAdbWaitNoCapture(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64);
+            _adb.RunOnDevice(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64);
         }
 
         // --- 2. XỬ LÝ GRID & DATA 2FA ---
@@ -1658,8 +1922,10 @@ namespace ToolAdb
                     ImeClearText(id);
                     Thread.Sleep(50); // Delay nhỏ để máy kịp xóa
                     ImeSendText(id, code);
+                    Thread.Sleep(80);
+                    _adb.RunOnDevice(id, "shell", "input", "keyevent", "66");
                     // Có thể thêm Enter nếu cần
-                    // RunAdbWaitNoCapture(id, "shell", "input", "keyevent", "66"); 
+                    // _adb.RunOnDevice(id, "shell", "input", "keyevent", "66"); 
                 });
 
                 SetStatus($"Sent 2FA to {id}");
@@ -1770,107 +2036,297 @@ namespace ToolAdb
 
         #region Helpers
 
-        // ==========================================
-        // 1. TAB CONVERT (CHUYỂN ĐỔI DỮ LIỆU)
-        // ==========================================
-        private void BuildConvertTab(TabPage page)
+        private void BuildMagiskTab(TabPage page)
         {
             page.BackColor = Color.FromArgb(248, 250, 252);
 
-            // 1. THANH CÔNG CỤ (Cho phép cuộn ngang nếu màn hình bé)
-            var pnlTop = new FlowLayoutPanel
+            var pnlTop = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 60,
-                Padding = new Padding(10, 12, 10, 10),
-                BackColor = Color.White,
-                FlowDirection = FlowDirection.LeftToRight,
-                AutoScroll = true, // Quan trọng: Nếu bị che sẽ hiện thanh cuộn
-                WrapContents = false // Quan trọng: Ép nằm trên 1 dòng
+                Height = 110,
+                Padding = new Padding(15, 15, 15, 10),
+                BackColor = Color.White
             };
 
-            // ComboBox (Thu gọn width từ 320 -> 260 cho thoáng)
-            var cboMode = new Guna2ComboBox
+            var lblTitle = new Label
             {
-                Width = 260,
-                Height = 36,
-                BorderRadius = 4,
-                BorderColor = Color.FromArgb(203, 213, 225),
-                Font = new Font("Segoe UI", 9.5f),
-                StartIndex = 1 // Mặc định: 3 Cột
+                Text = "Magisk Tools",
+                Dock = DockStyle.Top,
+                Height = 24,
+                Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(30, 41, 59)
             };
 
-            cboMode.Items.AddRange(new object[] {
-        "0. 3 dòng -> User|Pass|2FA",
-        "1. 3 dòng -> 3 CỘT (Google Sheet)",
-        "2. 1 dòng (|) -> 3 CỘT (Tab)",
-        "3. Lấy riêng cột 2FA",
-        "4. Lấy User|Pass (Bỏ 2FA)"
-    });
+            var pnlActions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 48,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            pnlActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            pnlActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
 
-            // Các nút chức năng (Thu gọn width)
-            var btnConvert = CreateButton("Chuyển đổi", Color.FromArgb(14, 165, 233), 90);
-            var btnCopy = CreateButton("Copy Output", Color.FromArgb(34, 197, 94), 100);
+            _btnMagiskPhase1 = new Guna2Button
+            {
+                Text = "Pha 1: Magisk TWRP",
+                Dock = DockStyle.Fill,
+                FillColor = Color.FromArgb(14, 165, 233),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                BorderRadius = 6,
+                Margin = new Padding(0, 0, 8, 0)
+            };
+            _btnMagiskPhase1.Click += async (s, e) => await StartMagiskPhase1Async();
 
-            // ▼▼▼ NÚT XÓA (MÀU ĐỎ)
-            var btnClear = CreateButton("Xóa", Color.FromArgb(239, 68, 68), 70);
+            _btnMagiskPhase2 = new Guna2Button
+            {
+                Text = "Pha 2: Cài Module",
+                Dock = DockStyle.Fill,
+                FillColor = Color.FromArgb(34, 197, 94),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                BorderRadius = 6,
+                Margin = new Padding(8, 0, 0, 0)
+            };
+            _btnMagiskPhase2.Click += async (s, e) => await StartMagiskPhase2Async();
 
-            // Thêm theo thứ tự
-            pnlTop.Controls.AddRange(new Control[] { cboMode, btnConvert, btnCopy, btnClear });
+            pnlActions.Controls.Add(_btnMagiskPhase1, 0, 0);
+            pnlActions.Controls.Add(_btnMagiskPhase2, 1, 0);
 
-            // 2. MAIN AREA (GIỮ NGUYÊN)
-            var split = new SplitContainer
+            var lblHint = new Label
+            {
+                Text = "Pha 1 dùng cho máy đang ở Android để reboot recovery, cài Magisk.zip và chép magisk.db. Pha 2 cài các module zip qua su rồi reboot.",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 9f),
+                ForeColor = Color.FromArgb(71, 85, 105)
+            };
+
+            pnlTop.Controls.Add(lblHint);
+            pnlTop.Controls.Add(pnlActions);
+            pnlTop.Controls.Add(lblTitle);
+
+            _txtMagiskLog = new RichTextBox
             {
                 Dock = DockStyle.Fill,
-                Orientation = Orientation.Vertical,
-                SplitterDistance = 450,
-                SplitterWidth = 10,
-                BackColor = Color.FromArgb(241, 245, 249)
+                ReadOnly = true,
+                BackColor = Color.FromArgb(15, 23, 42),
+                ForeColor = Color.FromArgb(34, 197, 94),
+                Font = new Font("Consolas", 9f),
+                BorderStyle = BorderStyle.None
             };
 
-            var pnlLeft = new Panel { Dock = DockStyle.Fill, Padding = new Padding(15, 10, 5, 15) };
-            var lblIn = new Label { Text = "Input:", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Color.FromArgb(71, 85, 105) };
-            var txtIn = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BorderStyle = BorderStyle.FixedSingle, PlaceholderText = "Email\r\nPass\r\n2FA..." };
-            pnlLeft.Controls.Add(txtIn); pnlLeft.Controls.Add(lblIn);
-
-            var pnlRight = new Panel { Dock = DockStyle.Fill, Padding = new Padding(5, 10, 15, 15) };
-            var lblOut = new Label { Text = "Output:", Dock = DockStyle.Top, Height = 25, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Color.FromArgb(71, 85, 105) };
-            var txtOut = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f), BackColor = Color.WhiteSmoke, BorderStyle = BorderStyle.FixedSingle };
-            pnlRight.Controls.Add(txtOut); pnlRight.Controls.Add(lblOut);
-
-            split.Panel1.Controls.Add(pnlLeft);
-            split.Panel2.Controls.Add(pnlRight);
-
-            // 3. LOGIC XỬ LÝ (GIỮ NGUYÊN)
-            btnConvert.Click += (s, e) =>
+            var pnlLog = new Panel
             {
-                string input = txtIn.Text.Trim();
-                if (string.IsNullOrEmpty(input)) return;
-                var lines = input.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
-                var results = new List<string>();
-                int mode = cboMode.SelectedIndex;
-
-                try
-                {
-                    if (mode == 0) for (int i = 0; i + 2 < lines.Count; i += 3) results.Add($"{lines[i]}|{lines[i + 1]}|{lines[i + 2]}");
-                    else if (mode == 1) for (int i = 0; i + 2 < lines.Count; i += 3) results.Add($"{lines[i]}\t{lines[i + 1]}\t{lines[i + 2]}");
-                    else if (mode == 2) foreach (var line in lines) results.Add(line.Replace("|", "\t"));
-                    else if (mode == 3) foreach (var line in lines) { var p = line.Split('|'); if (p.Length >= 3) results.Add(p[2]); }
-                    else if (mode == 4) foreach (var line in lines) { var p = line.Split('|'); if (p.Length >= 2) results.Add($"{p[0]}|{p[1]}"); }
-
-                    txtOut.Text = string.Join(Environment.NewLine, results);
-                    SetStatus($"Đã xong: {results.Count} dòng.");
-                }
-                catch (Exception ex) { MessageBox.Show("Lỗi: " + ex.Message); }
+                Dock = DockStyle.Fill,
+                Padding = new Padding(15, 10, 15, 15),
+                BackColor = Color.FromArgb(248, 250, 252)
             };
+            pnlLog.Controls.Add(_txtMagiskLog);
 
-            btnCopy.Click += (s, e) => { if (txtOut.TextLength > 0) { Clipboard.SetText(txtOut.Text); SetStatus("Đã Copy Output."); } };
-
-            // SỰ KIỆN NÚT XÓA
-            btnClear.Click += (s, e) => { txtIn.Clear(); txtOut.Clear(); SetStatus("Đã xóa"); };
-
-            page.Controls.Add(split);
+            page.Controls.Add(pnlLog);
             page.Controls.Add(pnlTop);
+        }
+
+        private void AppendMagiskLog(string message)
+        {
+            if (_txtMagiskLog == null) return;
+            string line = $"{DateTime.Now:HH:mm:ss} {message}{Environment.NewLine}";
+            if (_txtMagiskLog.InvokeRequired)
+            {
+                _txtMagiskLog.Invoke(new Action<string>(AppendMagiskLog), message);
+                return;
+            }
+            _txtMagiskLog.AppendText(line);
+            _txtMagiskLog.SelectionStart = _txtMagiskLog.TextLength;
+            _txtMagiskLog.ScrollToCaret();
+        }
+
+        private void SetMagiskButtonsEnabled(bool enabled)
+        {
+            if (_btnMagiskPhase1 == null || _btnMagiskPhase2 == null) return;
+            if (InvokeRequired)
+            {
+                Invoke(new Action<bool>(SetMagiskButtonsEnabled), enabled);
+                return;
+            }
+            _btnMagiskPhase1.Enabled = enabled;
+            _btnMagiskPhase2.Enabled = enabled;
+        }
+
+        private async Task StartMagiskPhase1Async()
+        {
+            using var zipDialog = new OpenFileDialog
+            {
+                Title = "Chọn file Magisk.zip",
+                Filter = "Zip Files (*.zip)|*.zip"
+            };
+            if (zipDialog.ShowDialog() != DialogResult.OK) return;
+
+            using var dbDialog = new OpenFileDialog
+            {
+                Title = "Chọn file magisk.db",
+                Filter = "DB Files (*.db)|*.db|All Files (*.*)|*.*"
+            };
+            if (dbDialog.ShowDialog() != DialogResult.OK) return;
+
+            var devices = GetTargetDevices();
+            if (devices.Count == 0)
+            {
+                MessageBox.Show("Không tìm thấy thiết bị Android nào!");
+                return;
+            }
+
+            AppendMagiskLog(new string('=', 50));
+            AppendMagiskLog($"BẮT ĐẦU PHA 1 CHO {devices.Count} THIẾT BỊ");
+            SetMagiskButtonsEnabled(false);
+            StartProgress();
+
+            try
+            {
+                await Task.Run(() => Parallel.ForEach(devices, new ParallelOptions { MaxDegreeOfParallelism = MagiskMaxWorkers }, dev =>
+                {
+                    MagiskPhase1Worker(dev, zipDialog.FileName, dbDialog.FileName);
+                }));
+                AppendMagiskLog("--- KẾT THÚC PHA 1 ---");
+            }
+            finally
+            {
+                StopProgress();
+                SetMagiskButtonsEnabled(true);
+                await ReloadDevices();
+            }
+        }
+
+        private async Task StartMagiskPhase2Async()
+        {
+            using var moduleDialog = new OpenFileDialog
+            {
+                Title = "Giữ Ctrl để chọn nhiều module ZIP",
+                Filter = "Zip Files (*.zip)|*.zip",
+                Multiselect = true
+            };
+            if (moduleDialog.ShowDialog() != DialogResult.OK || moduleDialog.FileNames.Length == 0) return;
+
+            var devices = GetTargetDevices();
+            if (devices.Count == 0)
+            {
+                MessageBox.Show("Không tìm thấy thiết bị Android nào!");
+                return;
+            }
+
+            AppendMagiskLog(new string('=', 50));
+            AppendMagiskLog($"BẮT ĐẦU PHA 2 CHO {devices.Count} THIẾT BỊ");
+            AppendMagiskLog("Các module sẽ cài: " + string.Join(", ", moduleDialog.FileNames.Select(Path.GetFileName)));
+            SetMagiskButtonsEnabled(false);
+            StartProgress();
+
+            try
+            {
+                await Task.Run(() => Parallel.ForEach(devices, new ParallelOptions { MaxDegreeOfParallelism = MagiskMaxWorkers }, dev =>
+                {
+                    MagiskPhase2Worker(dev, moduleDialog.FileNames);
+                }));
+                AppendMagiskLog("--- KẾT THÚC PHA 2 ---");
+            }
+            finally
+            {
+                StopProgress();
+                SetMagiskButtonsEnabled(true);
+                await ReloadDevices();
+            }
+        }
+
+        private bool WaitForRecovery(string deviceId)
+        {
+            AppendMagiskLog($"[{deviceId}] Đang đợi máy vào TWRP...");
+            for (int i = 0; i < 15; i++)
+            {
+                var recoveryDevices = GetAdbDevicesByState("recovery");
+                if (recoveryDevices.Any(x => string.Equals(x, deviceId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    Thread.Sleep(3000);
+                    return true;
+                }
+                Thread.Sleep(2000);
+            }
+            return false;
+        }
+
+        private void MagiskPhase1Worker(string devId, string zipPath, string dbPath)
+        {
+            try
+            {
+                AppendMagiskLog($"[{devId}] BẮT ĐẦU PHA 1: Reboot vào Recovery...");
+                _adb.RunOnDevice(devId, "reboot", "recovery");
+
+                if (!WaitForRecovery(devId))
+                {
+                    AppendMagiskLog($"[{devId}] [!] Lỗi: Không thể vào chế độ Recovery.");
+                    return;
+                }
+
+                AppendMagiskLog($"[{devId}] -> Đang đẩy và cài Magisk.zip...");
+                _adb.RunOnDevice(devId, "push", zipPath, "/tmp/Magisk.zip");
+                _adb.RunOnDevice(devId, "shell", "twrp", "install", "/tmp/Magisk.zip");
+
+                AppendMagiskLog($"[{devId}] -> Đang tiêm magisk.db...");
+                _adb.RunOnDevice(devId, "shell", "twrp", "mount", "/data");
+                _adb.RunOnDevice(devId, "shell", "mkdir", "-p", "/data/adb");
+                _adb.RunOnDevice(devId, "push", dbPath, "/data/adb/magisk.db");
+                _adb.RunOnDevice(devId, "shell", "chmod", "600", "/data/adb/magisk.db");
+
+                AppendMagiskLog($"[{devId}] -> HOÀN TẤT! Đang reboot về Android.");
+                _adb.RunOnDevice(devId, "shell", "twrp", "reboot", "system");
+            }
+            catch (Exception ex)
+            {
+                AppendMagiskLog($"[{devId}] [!] Lỗi hệ thống: {ex.Message}");
+            }
+        }
+
+        private void MagiskPhase2Worker(string devId, string[] modulePaths)
+        {
+            try
+            {
+                AppendMagiskLog($"[{devId}] BẮT ĐẦU PHA 2: Cài {modulePaths.Length} module...");
+                int success = 0;
+
+                foreach (var modPath in modulePaths)
+                {
+                    string modName = Path.GetFileName(modPath);
+                    string tmpPath = $"/data/local/tmp/{modName}";
+
+                    AppendMagiskLog($"[{devId}] -> Đẩy {modName}...");
+                    _adb.RunOnDevice(devId, "push", modPath, tmpPath);
+
+                    AppendMagiskLog($"[{devId}] -> Cài đặt qua su...");
+                    var res = _adb.Capture(new[] { "-s", devId, "shell", "su", "-c", $"magisk --install-module '{tmpPath}'" });
+                    _adb.RunOnDevice(devId, "shell", "rm", tmpPath);
+
+                    if (res.exitCode == 0 && res.stdout.Contains("Done"))
+                    {
+                        success++;
+                    }
+                    else
+                    {
+                        string msg = string.IsNullOrWhiteSpace(res.stderr) ? res.stdout.Trim() : res.stderr.Trim();
+                        AppendMagiskLog($"[{devId}] [!] Lỗi cài {modName}: {msg}");
+                    }
+                }
+
+                if (success > 0)
+                {
+                    AppendMagiskLog($"[{devId}] HOÀN TẤT cài {success}/{modulePaths.Length}. Đang reboot!");
+                    _adb.RunOnDevice(devId, "reboot");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendMagiskLog($"[{devId}] [!] Lỗi hệ thống: {ex.Message}");
+            }
         }
 
         // ==========================================
@@ -1893,82 +2349,6 @@ namespace ToolAdb
                 TextAlign = HorizontalAlignment.Left,
                 TextOffset = new Point(10, 0)
             };
-        }
-
-        // Helper 2: Tạo nút chức năng cho Tab Convert
-        private Guna2Button CreateButton(string text, Color color, int width)
-        {
-            return new Guna2Button
-            {
-                Text = text,
-                FillColor = color,
-                ForeColor = Color.White,
-                Height = 36,
-                Width = width,
-                BorderRadius = 4,
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(0, 0, 10, 0),
-                Cursor = Cursors.Hand
-            };
-        }
-
-        // Helper 3: Tạo GroupBox cho Dashboard
-        private Guna2GroupBox CreateGroupbox(string title)
-        {
-            return new Guna2GroupBox
-            {
-                Text = title,
-                Font = new Font("Segoe UI Semibold", 9.5f),
-                ForeColor = Color.Black,
-                CustomBorderColor = Color.FromArgb(241, 245, 249),
-                CustomBorderThickness = new Padding(0, 35, 0, 0),
-                FillColor = Color.White,
-                BorderColor = Color.FromArgb(226, 232, 240),
-                BorderRadius = 6,
-                Width = 340,
-                Margin = new Padding(10)
-            };
-        }
-
-        // Helper 4: Thêm nút vào GroupBox Dashboard
-        private void AddBtn(Guna2GroupBox group, string text, Color color, Action onClick)
-        {
-            var btn = new Guna2Button
-            {
-                Text = text,
-                FillColor = color,
-                ForeColor = Color.White,
-                Tag = onClick
-            };
-            btn.Click += (s, e) => onClick();
-            group.Controls.Add(btn);
-        }
-
-        // Helper 5: Sắp xếp nút trong GroupBox (Responsive)
-        private void ReflowCardCompact(Guna2GroupBox card, Color themeColor, FlowLayoutPanel parent)
-        {
-            var buttons = card.Controls.OfType<Guna2Button>().ToList();
-            int gap = 10, padding = 15, headerHeight = 40, btnHeight = 38;
-            int colWidth = (card.Width - (padding * 2) - gap) / 2;
-
-            for (int i = 0; i < buttons.Count; i++)
-            {
-                var btn = buttons[i];
-                btn.Height = btnHeight;
-                btn.Width = colWidth;
-                btn.BorderRadius = 4;
-                btn.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-                if (btn.FillColor == Color.FromArgb(94, 148, 255)) btn.FillColor = themeColor;
-
-                int row = i / 2;
-                int col = i % 2;
-                int x = padding + (col * (colWidth + gap));
-                int y = headerHeight + padding + (row * (btnHeight + gap));
-                btn.Location = new Point(x, y);
-            }
-            int totalRows = (int)Math.Ceiling(buttons.Count / 2.0);
-            card.Height = headerHeight + padding + (totalRows * (btnHeight + gap)) + 5;
-            parent.Controls.Add(card);
         }
 
         #endregion
