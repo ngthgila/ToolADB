@@ -1,10 +1,14 @@
 using System.Diagnostics;
-using Guna.UI2.WinForms;
+using ToolAdb.UI;
 
 namespace ToolAdb.Features.InappTrial
 {
     internal sealed class InappTrialTab : TabPage
     {
+        private static readonly Color Slate = Color.FromArgb(71, 85, 105);
+        private static readonly Color Emerald = Color.FromArgb(5, 150, 105);
+        private static readonly Color Blue = Color.FromArgb(37, 99, 235);
+
         private readonly InappTrialService _service;
         private readonly Func<List<string>> _getSelectedDevices;
         private readonly FlowLayoutPanel _actions;
@@ -26,36 +30,17 @@ namespace ToolAdb.Features.InappTrial
 
             // Danh sách app bỏ trial. Thêm app mới: thêm một dòng AddAction tại đây,
             // thêm giá trị enum trong InappTrialService.cs và file InappTrialService.<App>.cs.
-            AddAction("Grammarly: Tắt trial", InappTrialAction.GrammarlyNoTrial, Color.FromArgb(14, 116, 144),
+            AddAction("🟢 Grammarly: Tắt trial", InappTrialAction.GrammarlyNoTrial, Emerald,
                 "Thao tác sẽ sửa cấu hình thử nghiệm cục bộ và khởi động lại Grammarly.");
-            AddAction("Chess.com: Bỏ trial", InappTrialAction.ChessNoTrial, Color.FromArgb(37, 99, 235),
+            AddAction("♟ Chess.com: Bỏ trial", InappTrialAction.ChessNoTrial, Blue,
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Chess.com bỏ offer trial, mua thẳng.");
 
-            var scanButton = new Guna2Button
-            {
-                Text = "GPlay: Quét mọi offer", Height = 36, Width = 170, BorderRadius = 4,
-                FillColor = Color.FromArgb(71, 85, 105), ForeColor = Color.White
-            };
+            var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
             _actions.Controls.Add(scanButton);
 
-            _summary = new Label
-            {
-                Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(8),
-                Text = "Tích thiết bị ở danh sách bên trái. Các thao tác cần ADB root và sửa dữ liệu cục bộ trên máy."
-            };
-            _results = new DataGridView
-            {
-                Dock = DockStyle.Fill, ReadOnly = true, RowHeadersVisible = false,
-                BackgroundColor = Color.White, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells
-            };
-            _results.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Thiết bị", Width = 180, SortMode = DataGridViewColumnSortMode.NotSortable });
-            _results.Columns.Add(new DataGridViewTextBoxColumn
-            {
-                HeaderText = "Kết quả", SortMode = DataGridViewColumnSortMode.NotSortable, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-                DefaultCellStyle = new DataGridViewCellStyle { WrapMode = DataGridViewTriState.True }
-            });
+            _summary = TabUi.SummaryLabel("Tích thiết bị ở danh sách bên trái. Các thao tác cần ADB root và sửa dữ liệu cục bộ trên máy.");
+            _results = TabUi.ResultsGrid("Kết quả");
 
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -69,11 +54,7 @@ namespace ToolAdb.Features.InappTrial
 
         private void AddAction(string text, InappTrialAction action, Color color, string confirmation = null)
         {
-            var button = new Guna2Button
-            {
-                Text = text, Height = 36, Width = 170, BorderRadius = 4,
-                FillColor = color, ForeColor = Color.White
-            };
+            var button = TabUi.ActionButton(text, color, 180);
             button.Click += async (sender, args) => await RunAsync(action, confirmation);
             _actions.Controls.Add(button);
         }
@@ -99,14 +80,14 @@ namespace ToolAdb.Features.InappTrial
             {
                 _results.Rows.Clear();
                 foreach (string serial in targets)
-                    _results.Rows.Add(serial, "Đang chờ");
+                    _results.Rows.Add(serial, "⏳ Đang chờ…");
                 _summary.Text = $"Đang xử lý {targets.Length} thiết bị…";
 
                 var results = new (bool success, string message)[targets.Length];
                 await Task.Run(() => Parallel.For(0, targets.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
                 {
                     try { results[i] = (true, _service.Run(targets[i], action)); }
-                    catch (Exception ex) { results[i] = (false, "Lỗi: " + ex.Message); }
+                    catch (Exception ex) { results[i] = (false, "❌ Lỗi: " + ex.Message); }
                 }));
 
                 if (IsDisposed) return;
@@ -139,7 +120,7 @@ namespace ToolAdb.Features.InappTrial
             {
                 _results.Rows.Clear();
                 foreach (string serial in targets)
-                    _results.Rows.Add(serial, "Đang quét…");
+                    _results.Rows.Add(serial, "🔎 Đang quét…");
                 _summary.Text = $"Đang quét offer của {packageName} trên {targets.Length} thiết bị…";
 
                 var offers = new List<BillingOfferInfo>[targets.Length];
@@ -150,13 +131,13 @@ namespace ToolAdb.Features.InappTrial
                     {
                         offers[i] = _service.ScanOffers(targets[i], packageName);
                         messages[i] = offers[i].Count > 0
-                            ? $"Đã quét {offers[i].Count} pricing phase."
-                            : "Chưa có cache offer. Hãy mở app và màn hình paywall một lần rồi quét lại.";
+                            ? $"✅ Đã quét {offers[i].Count} pricing phase."
+                            : "⚠️ Chưa có cache offer. Hãy mở app và màn hình paywall một lần rồi quét lại.";
                     }
                     catch (Exception ex)
                     {
                         offers[i] = new List<BillingOfferInfo>();
-                        messages[i] = "Lỗi: " + ex.Message;
+                        messages[i] = "❌ Lỗi: " + ex.Message;
                     }
                 }));
 

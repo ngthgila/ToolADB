@@ -4,7 +4,7 @@ using ToolAdb.Infrastructure;
 
 namespace ToolAdb.Features.Picsart
 {
-    internal enum PicsartAction { Inspect, OpenPricing, PlusMonthly, ProMonthly, UltraMonthly, Reset, ResetKeepLogin }
+    internal enum PicsartAction { Inspect, OpenPricing, ProMonthly, UltraMonthly, Reset, ResetKeepLogin }
 
     internal sealed class PicsartService
     {
@@ -29,16 +29,20 @@ namespace ToolAdb.Features.Picsart
             Shell(serial, "am force-stop " + Package);
             if (action == PicsartAction.Reset)
             {
+                // Giữ lại settings.json (cấu hình bảng giá) qua backup /sdcard như bản Inapp-Patch gốc.
+                Shell(serial, $"cp {DataPath}/files/settings.json /sdcard/.picsart_settings_bak.json 2>/dev/null || true");
                 if (Shell(serial, "pm clear " + Package).Trim() != "Success")
                     throw new InvalidOperationException("Picsart không xác nhận đã xóa dữ liệu.");
 
                 string preferences = DataPath + "/shared_prefs";
                 string file = preferences + "/com.picsart.analytics.xml";
-                Shell(serial, $"set -e; mkdir -p {preferences}; " +
+                Shell(serial, $"set -e; mkdir -p {preferences} {DataPath}/files; " +
+                    "if [ -f /sdcard/.picsart_settings_bak.json ]; then " +
+                    $"cp /sdcard/.picsart_settings_bak.json {DataPath}/files/settings.json; rm -f /sdcard/.picsart_settings_bak.json; fi; " +
                     $"printf '%s' '<map><string name=\"device_id\">{id}</string></map>' > {file}; " +
                     $"chmod 660 {file}; " + FixPermissions);
                 Launch(serial);
-                return "Đã xóa dữ liệu Picsart và gửi lệnh mở lại.";
+                return "Đã xóa dữ liệu Picsart (giữ cấu hình bảng giá) và gửi lệnh mở lại.";
             }
 
             // Check the settings file before making any of the optional preference changes.
@@ -48,12 +52,9 @@ namespace ToolAdb.Features.Picsart
             if (action == PicsartAction.ResetKeepLogin || action == PicsartAction.UltraMonthly)
                 ResetPreferences(serial, id);
 
-            string tabPatch = action switch
-            {
-                PicsartAction.PlusMonthly => "s/\"content_id\":\"pro_tab_default\"}/\"content_id\":\"plus_tab_default\"}/g",
-                PicsartAction.ProMonthly => "s/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g",
-                _ => ""
-            };
+            string tabPatch = action == PicsartAction.ProMonthly
+                ? "s/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g"
+                : "";
             string patch = action == PicsartAction.UltraMonthly
                 ? PatchUltra
                 : PatchMonthly + (tabPatch.Length == 0 ? "" : $"sed -i '{tabPatch}' {DataPath}/files/settings.json; ");
@@ -89,22 +90,30 @@ namespace ToolAdb.Features.Picsart
             string google = Shell(serial, "dumpsys account | grep 'type=com.google' | head -n 1");
             string picsart = Shell(serial, $"if [ -f {DataPath}/files/user_data ]; then " +
                 $"grep -o '\"email\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' {DataPath}/files/user_data | head -n 1; fi");
-            var status = new List<string>();
             Match googleAccount = Regex.Match(google, @"name=([^,]+),\s*type=com\.google");
             Match picsartAccount = Regex.Match(picsart, @"""email""\s*:\s*""([^""]+)""");
-            if (googleAccount.Success) status.Add("Google: " + googleAccount.Groups[1].Value);
-            if (picsartAccount.Success) status.Add("Picsart: " + picsartAccount.Groups[1].Value);
-            int accountFields = status.Count;
-            if (Regex.IsMatch(output, @"""accessScopes""\s*:\s*\[\s*""premium"""))
-                status.Add("Có dấu hiệu premium trong cache");
-            if (output.Contains("pro_weekly", StringComparison.Ordinal) || output.Contains("plus_weekly", StringComparison.Ordinal))
-                status.Add("Có cấu hình tuần");
-            if (output.Contains("pro_monthly", StringComparison.Ordinal) || output.Contains("plus_monthly", StringComparison.Ordinal))
-                status.Add("Có cấu hình tháng");
+
+            var lines = new List<string>
+            {
+                "👤 Google:  " + (googleAccount.Success ? googleAccount.Groups[1].Value : "chưa đăng nhập"),
+                "🎨 Picsart:  " + (picsartAccount.Success ? picsartAccount.Groups[1].Value : "chưa đăng nhập")
+            };
+
+            var plans = new List<string>();
             if (output.Contains("subscription_ultra_monthly", StringComparison.Ordinal))
-                status.Add("Có cấu hình Ultra");
-            if (status.Count == accountFields) status.Add("Chưa thấy dấu hiệu gói trong dữ liệu cục bộ.");
-            return string.Join(" · ", status);
+                plans.Add("🔥 Ultra tháng (1500 credit)");
+            if (output.Contains("pro_monthly", StringComparison.Ordinal) || output.Contains("plus_monthly", StringComparison.Ordinal))
+                plans.Add("gói tháng");
+            if (output.Contains("pro_weekly", StringComparison.Ordinal) || output.Contains("plus_weekly", StringComparison.Ordinal))
+                plans.Add("gói tuần (dính A/B test)");
+            lines.Add("💳 Bảng giá:  " + (plans.Count > 0
+                ? string.Join(" + ", plans)
+                : "chưa tải cấu hình (hãy mở Picsart một lần)"));
+
+            if (Regex.IsMatch(output, @"""accessScopes""\s*:\s*\[\s*""premium"""))
+                lines.Add("⚠️ Cache còn dấu hiệu premium — nên Reset giữ đăng nhập trước khi mua gói mới.");
+
+            return string.Join(Environment.NewLine, lines);
         }
 
         private void EnsureRoot(string serial)
