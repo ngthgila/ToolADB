@@ -26,6 +26,8 @@ namespace ToolAdb.Features.Picsart
             AddAction("Mở bảng giá", PicsartAction.OpenPricing, Color.FromArgb(29, 78, 216));
             AddAction("Plus tháng", PicsartAction.PlusMonthly, Color.FromArgb(4, 120, 87));
             AddAction("Pro tháng", PicsartAction.ProMonthly, Color.FromArgb(109, 40, 217));
+            AddAction("Ultra tháng (1500Cr)", PicsartAction.UltraMonthly, Color.FromArgb(234, 88, 12),
+                "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
             AddAction("Reset giữ đăng nhập", PicsartAction.ResetKeepLogin, Color.FromArgb(154, 52, 18),
                 "Thao tác sẽ đổi ID ứng dụng và sửa hoặc xóa cache thuê bao cục bộ.");
             AddAction("Xóa dữ liệu Picsart", PicsartAction.Reset, Color.FromArgb(185, 28, 28),

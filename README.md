@@ -9,8 +9,8 @@ Tool quản lý thiết bị Android qua ADB (WinForms, .NET 8, Windows). Gom nh
 | **Dashboard** | Quản lý thiết bị: liệt kê, chọn, các thao tác chung |
 | **Auto Login & 2FA** | Tự động đăng nhập tài khoản, quản lý kho tài khoản (Kho / Đã dùng) |
 | **GeoSpoof** | Giả lập vị trí |
-| **Picsart** | Xử lý riêng Picsart: kiểm tra cấu hình, mở bảng giá, ép gói Plus/Pro tháng, reset giữ đăng nhập, xóa dữ liệu |
-| **Inapp Trial** | Bỏ bước trial của các app để mua thẳng: Grammarly (tắt trial 7 ngày), Chess.com (bỏ offer trial, có sao lưu cache Billing) |
+| **Picsart** | Xử lý riêng Picsart: kiểm tra cấu hình, mở bảng giá, ép gói Plus/Pro/Ultra tháng, reset giữ đăng nhập, xóa dữ liệu |
+| **Inapp Trial** | Bỏ bước trial của các app để mua thẳng: Grammarly (tắt trial 7 ngày), Chess.com (bỏ offer trial, có sao lưu cache Billing); quét mọi offer Google Play của một package bất kỳ, xuất CSV |
 
 ## Yêu cầu
 

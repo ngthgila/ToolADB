@@ -4,7 +4,7 @@ using ToolAdb.Infrastructure;
 
 namespace ToolAdb.Features.Picsart
 {
-    internal enum PicsartAction { Inspect, OpenPricing, PlusMonthly, ProMonthly, Reset, ResetKeepLogin }
+    internal enum PicsartAction { Inspect, OpenPricing, PlusMonthly, ProMonthly, UltraMonthly, Reset, ResetKeepLogin }
 
     internal sealed class PicsartService
     {
@@ -43,7 +43,9 @@ namespace ToolAdb.Features.Picsart
 
             // Check the settings file before making any of the optional preference changes.
             Shell(serial, $"test -f {DataPath}/files/settings.json || {{ echo 'Chưa có settings.json của Picsart' >&2; exit 1; }}");
-            if (action == PicsartAction.ResetKeepLogin)
+            // Gói Ultra luôn xóa token thuê bao cũ trước, tránh lỗi
+            // "We are unable to change your subscription plan" của Google Play.
+            if (action == PicsartAction.ResetKeepLogin || action == PicsartAction.UltraMonthly)
                 ResetPreferences(serial, id);
 
             string tabPatch = action switch
@@ -52,11 +54,14 @@ namespace ToolAdb.Features.Picsart
                 PicsartAction.ProMonthly => @"s/content_id\(.,.\)plus_tab_default\(.\)}/content_id\1pro_tab_default\2}/g",
                 _ => ""
             };
-            Shell(serial, "set -e; " + PatchMonthly +
-                (tabPatch.Length == 0 ? "" : $"sed -i '{tabPatch}' {DataPath}/files/settings.json; ") +
-                FixPermissions);
+            string patch = action == PicsartAction.UltraMonthly
+                ? PatchUltra
+                : PatchMonthly + (tabPatch.Length == 0 ? "" : $"sed -i '{tabPatch}' {DataPath}/files/settings.json; ");
+            Shell(serial, "set -e; " + patch + FixPermissions);
             Launch(serial);
-            return "Đã chạy lệnh cập nhật cấu hình cục bộ và gửi lệnh mở lại.";
+            return action == PicsartAction.UltraMonthly
+                ? "Đã xóa token thuê bao cũ, ép cấu hình gói Ultra (1 tháng, 1500 credit) và gửi lệnh mở lại."
+                : "Đã chạy lệnh cập nhật cấu hình cục bộ và gửi lệnh mở lại.";
         }
 
         private void ResetPreferences(string serial, string id)
@@ -66,7 +71,8 @@ namespace ToolAdb.Features.Picsart
                 $"if [ -f \"$file\" ]; then sed -i 's/d_[0-9a-f]\\{{32\\}}/{id}/g' \"$file\"; fi; done; " +
                 EditIfPresent("com.picsart.analytics.tag_settings_cache.xml", "s/\"subscription_status\":\"subscribed\"/\"subscription_status\":\"not_subscribed\"/g") +
                 EditIfPresent("com.picsart.studio_preferences.xml", "s/app_start_subscription_status\" value=\"true/app_start_subscription_status\" value=\"false/g; s/SUBSCRIPTION\" value=\"true/SUBSCRIPTION\" value=\"false/g") +
-                $"rm -f {DataPath}/shared_prefs/subscription.shared.preferences.xml {DataPath}/shared_prefs/com.facebook.internal.iap.IAP_CACHE_GPBLV2V7.xml; ");
+                $"rm -f {DataPath}/files/device-id {DataPath}/files/internal-device-id " +
+                $"{DataPath}/shared_prefs/subscription.shared.preferences.xml {DataPath}/shared_prefs/com.facebook.internal.iap.IAP_CACHE_GPBLV2V7.xml; ");
         }
 
         private static string EditIfPresent(string name, string expression)
@@ -95,6 +101,8 @@ namespace ToolAdb.Features.Picsart
                 status.Add("Có cấu hình tuần");
             if (output.Contains("pro_monthly", StringComparison.Ordinal) || output.Contains("plus_monthly", StringComparison.Ordinal))
                 status.Add("Có cấu hình tháng");
+            if (output.Contains("subscription_ultra_monthly", StringComparison.Ordinal))
+                status.Add("Có cấu hình Ultra");
             if (status.Count == accountFields) status.Add("Chưa thấy dấu hiệu gói trong dữ liệu cục bộ.");
             return string.Join(" · ", status);
         }
@@ -133,9 +141,51 @@ namespace ToolAdb.Features.Picsart
         private const string PatchMonthly =
             @"sed -i 's/pro_weekly_100\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
             @"s/pro_weekly\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
+            @"s/ultra_monthly\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
+            @"s/ultra_yearly\(.,.\)is_selected/pro_yearly_trial\1is_selected/g; " +
             @"s/plus_weekly\(.,.\)is_selected/plus_monthly\1is_selected/g; " +
             @"s/package_id\(.,.\)subscription_pro_weekly/package_id\1subscription_pro_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_plus_weekly/package_id\1subscription_plus_tier_monthly/g' " +
+            @"s/package_id\(.,.\)subscription_ultra_monthly/package_id\1subscription_pro_monthly/g; " +
+            @"s/package_id\(.,.\)subscription_plus_weekly/package_id\1subscription_plus_tier_monthly/g; " +
+            @"s/title_12/title_3/g; s/subtitle_8/subtitle_2/g; " +
+            // Nút pro_monthly mặc định trỏ tới subscription_pro_monthly_100 (chỉ 100 credit/tháng);
+            // ép về SKU chuẩn subscription_pro_monthly (500 credit/tháng).
+            @"s/package_sku\(.,.\)subscription_pro_monthly_100/package_sku\1subscription_pro_monthly/g; " +
+            @"s/package_sku\(.,.\)subscription_pro_1_monthly/package_sku\1subscription_pro_monthly/g' " +
+            DataPath + "/files/settings.json; ";
+
+        private const string PatchUltra =
+            @"sed -i 's/package_sku\(.,.\)subscription_ultra_monthly_750_credits/package_sku\1subscription_ultra_monthly/g; " +
+            @"s/package_sku\(.,.\)subscription_ultra_yearly_750_credits/package_sku\1subscription_ultra_yearly/g; " +
+            @"s/pro_weekly_100\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/pro_weekly_100\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
+            @"s/pro_weekly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/pro_weekly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
+            @"s/pro_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/pro_monthly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
+            @"s/plus_weekly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/plus_weekly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
+            @"s/plus_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/plus_monthly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
+            @"s/ultra_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
+            @"s/pro_yearly_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
+            @"s/pro_yearly_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
+            @"s/pro_yearly_wo_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
+            @"s/pro_yearly_wo_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
+            @"s/plus_yearly_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
+            @"s/plus_yearly_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
+            @"s/plus_yearly_wo_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
+            @"s/plus_yearly_wo_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
+            @"s/ultra_yearly\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
+            @"s/package_id\(.,.\)subscription_pro_weekly/package_id\1subscription_ultra_monthly/g; " +
+            @"s/package_id\(.,.\)subscription_pro_monthly/package_id\1subscription_ultra_monthly/g; " +
+            @"s/package_id\(.,.\)subscription_plus_weekly/package_id\1subscription_ultra_monthly/g; " +
+            @"s/package_id\(.,.\)subscription_plus_tier_monthly/package_id\1subscription_ultra_monthly/g; " +
+            @"s/content_id\(.,.\)plus_tab_default\(.\)}/content_id\1pro_tab_default\2}/g; " +
+            @"s/content_id\(.,.\)pro_tab_ultra\(.,.\)selected/content_id\1pro_tab_default\2selected/g; " +
+            @"s/content_id\(.,.\)ultra_yearly\(.,.\)badge/content_id\1pro_tab_default\2badge/g; " +
+            @"s/content_id\(.,.\)ultra_yearly_upgrade\(.,.\)selected/content_id\1pro_tab_default\2selected/g; " +
+            @"s/title_3/title_12/g; s/subtitle_2/subtitle_8/g' " +
             DataPath + "/files/settings.json; ";
 
         private const string FixPermissions =

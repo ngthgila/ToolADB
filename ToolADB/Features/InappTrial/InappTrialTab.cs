@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Guna.UI2.WinForms;
 
 namespace ToolAdb.Features.InappTrial
@@ -29,6 +30,14 @@ namespace ToolAdb.Features.InappTrial
                 "Thao tác sẽ sửa cấu hình thử nghiệm cục bộ và khởi động lại Grammarly.");
             AddAction("Chess.com: Bỏ trial", InappTrialAction.ChessNoTrial, Color.FromArgb(37, 99, 235),
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Chess.com bỏ offer trial, mua thẳng.");
+
+            var scanButton = new Guna2Button
+            {
+                Text = "GPlay: Quét mọi offer", Height = 36, Width = 170, BorderRadius = 4,
+                FillColor = Color.FromArgb(71, 85, 105), ForeColor = Color.White
+            };
+            scanButton.Click += async (sender, args) => await ScanOffersAsync();
+            _actions.Controls.Add(scanButton);
 
             _summary = new Label
             {
@@ -109,6 +118,133 @@ namespace ToolAdb.Features.InappTrial
             {
                 if (!IsDisposed) _actions.Enabled = true;
             }
+        }
+
+        private async Task ScanOffersAsync()
+        {
+            if (!_actions.Enabled) return;
+
+            var targets = _getSelectedDevices().Distinct(StringComparer.Ordinal).ToArray();
+            if (targets.Length == 0)
+            {
+                _summary.Text = "Hãy tích ít nhất một thiết bị ở danh sách bên trái.";
+                return;
+            }
+
+            string packageName = PromptForPackageName();
+            if (packageName == null) return;
+
+            _actions.Enabled = false;
+            try
+            {
+                _results.Rows.Clear();
+                foreach (string serial in targets)
+                    _results.Rows.Add(serial, "Đang quét…");
+                _summary.Text = $"Đang quét offer của {packageName} trên {targets.Length} thiết bị…";
+
+                var offers = new List<BillingOfferInfo>[targets.Length];
+                var messages = new string[targets.Length];
+                await Task.Run(() => Parallel.For(0, targets.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
+                {
+                    try
+                    {
+                        offers[i] = _service.ScanOffers(targets[i], packageName);
+                        messages[i] = offers[i].Count > 0
+                            ? $"Đã quét {offers[i].Count} pricing phase."
+                            : "Chưa có cache offer. Hãy mở app và màn hình paywall một lần rồi quét lại.";
+                    }
+                    catch (Exception ex)
+                    {
+                        offers[i] = new List<BillingOfferInfo>();
+                        messages[i] = "Lỗi: " + ex.Message;
+                    }
+                }));
+
+                if (IsDisposed) return;
+                for (int i = 0; i < targets.Length; i++)
+                    _results.Rows[i].Cells[1].Value = messages[i];
+
+                var all = offers.SelectMany(x => x).ToList();
+                if (all.Count == 0)
+                {
+                    _summary.Text = $"Không tìm thấy offer của {packageName} trong cache Billing.";
+                    return;
+                }
+
+                string reportPath = InappTrialService.SaveOfferReport(all, packageName);
+                int offerCount = all.Select(x => x.Serial + "|" + x.ProductId + "|" + x.BasePlanId + "|" + x.OfferId).Distinct().Count();
+                _summary.Text = $"Đã quét {offerCount} offer/base plan ({all.Count} pricing phase) của {packageName}.";
+                ShowOfferResults(all, packageName, reportPath);
+            }
+            finally
+            {
+                if (!IsDisposed) _actions.Enabled = true;
+            }
+        }
+
+        private string PromptForPackageName()
+        {
+            using var prompt = new Form
+            {
+                Text = "Quét offer Google Play",
+                ClientSize = new Size(520, 145),
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false, MinimizeBox = false
+            };
+            var label = new Label { Text = "Package ứng dụng (ví dụ: com.openai.chatgpt):", Location = new Point(18, 16), AutoSize = true };
+            var input = new TextBox { Text = "com.openai.chatgpt", Location = new Point(20, 43), Width = 478 };
+            var ok = new Button { Text = "Quét offer", DialogResult = DialogResult.OK, Location = new Point(318, 92), Width = 85 };
+            var cancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Location = new Point(413, 92), Width = 85 };
+            prompt.Controls.AddRange(new Control[] { label, input, ok, cancel });
+            prompt.AcceptButton = ok;
+            prompt.CancelButton = cancel;
+
+            if (prompt.ShowDialog(this) != DialogResult.OK) return null;
+
+            string packageName = input.Text.Trim();
+            if (!InappTrialService.IsValidPackageName(packageName))
+            {
+                MessageBox.Show(this, "Package không hợp lệ. Chỉ dùng chữ, số, dấu gạch dưới và dấu chấm.",
+                    "Package không hợp lệ", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+            return packageName;
+        }
+
+        private void ShowOfferResults(List<BillingOfferInfo> offers, string packageName, string reportPath)
+        {
+            var form = new Form
+            {
+                Text = "Google Play Offers - " + packageName,
+                Size = new Size(1320, 680),
+                MinimumSize = new Size(950, 500),
+                StartPosition = FormStartPosition.CenterParent,
+                Font = new Font("Segoe UI", 9f)
+            };
+            var summary = new Label
+            {
+                Dock = DockStyle.Top, Height = 45, Padding = new Padding(10, 7, 10, 5),
+                Text = $"{offers.Count} pricing phase | Báo cáo: {reportPath}", AutoEllipsis = true
+            };
+            var offerGrid = new DataGridView
+            {
+                Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
+                RowHeadersVisible = false, AutoGenerateColumns = true,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                DataSource = offers
+            };
+            var openReport = new Button { Dock = DockStyle.Bottom, Height = 38, Text = "Mở thư mục báo cáo" };
+            openReport.Click += (sender, args) =>
+            {
+                try { Process.Start("explorer.exe", "/select,\"" + reportPath + "\""); }
+                catch (Exception ex) { MessageBox.Show(this, ex.Message, "Không mở được báo cáo"); }
+            };
+            form.Controls.Add(offerGrid);
+            form.Controls.Add(summary);
+            form.Controls.Add(openReport);
+            form.ShowDialog(this);
         }
     }
 }
