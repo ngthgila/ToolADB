@@ -1782,7 +1782,9 @@ setprop sys.powerctl reboot
             if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
             if (l.Length == 0) { MessageBox.Show("Chưa có dữ liệu!"); return; }
             StartProgress();
-            await Task.Run(() => Parallel.ForEach(t, (id, s, i) => {
+            // Giới hạn 4 luồng: tránh bung hàng chục adb.exe cùng lúc dội vào một adb server
+            // (10+ máy) gây nghẽn transport khiến vài máy treo tới ~30s. Đồng bộ với tab Picsart/Inapp Trial.
+            await Task.Run(() => Parallel.ForEach(t, new ParallelOptions { MaxDegreeOfParallelism = 4 }, (id, s, i) => {
                 if (i >= l.Length) return;
                 var p = ParseLine(l[i]); var txt = isEmail ? p.email : p.pass;
                 if (string.IsNullOrWhiteSpace(txt)) return;
@@ -1812,11 +1814,13 @@ setprop sys.powerctl reboot
         private const string AutomationImeB64ExtraKey = "b64";
         private readonly HashSet<string> _imeEnsured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _imeEnsuredLock = new object();
-        private bool IsAutomationImeActive(string deviceId) { var cur = _adb.ReadOutput($"-s {deviceId} shell settings get secure default_input_method"); return (cur ?? "").Trim().Equals(AutomationImeId, StringComparison.OrdinalIgnoreCase); }
         private void EnsureAutomationIme(string deviceId)
         {
             if (string.IsNullOrWhiteSpace(deviceId)) return;
-            lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId) && IsAutomationImeActive(deviceId)) return; }
+            // Đã set IME cho máy này thì tin cache, không probe lại mỗi lần gửi.
+            // Probe cũ (settings get) chạy mỗi lần gửi, cộng dồn round-trip adb gây nghẽn khi 10+ máy.
+            // Nếu IME bị đổi ngoài ý muốn, dùng nút "Set IME" (ForceSetAutomationIme) để set lại.
+            lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId)) return; }
             _adb.RunOnDevice(deviceId, "shell", "ime", "enable", AutomationImeId); _adb.RunOnDevice(deviceId, "shell", "ime", "set", AutomationImeId);
             lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
         }
@@ -1965,7 +1969,8 @@ setprop sys.powerctl reboot
             // BƯỚC 2: Đưa List dữ liệu vào luồng chạy ngầm (An toàn tuyệt đối)
             await Task.Run(() =>
             {
-                Parallel.For(0, targets.Count, i =>
+                // Giới hạn 4 luồng để không nghẽn adb server khi gửi 2FA cho 10+ máy cùng lúc.
+                Parallel.For(0, targets.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
                 {
                     // Chỉ gửi nếu có mã tương ứng với thứ tự máy
                     if (i < codesToSend.Count && !string.IsNullOrEmpty(codesToSend[i]))
