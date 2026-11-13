@@ -50,8 +50,8 @@ namespace ToolAdb.Features.Picsart
 
             string tabPatch = action switch
             {
-                PicsartAction.PlusMonthly => @"s/content_id\(.,.\)pro_tab_default\(.\)}/content_id\1plus_tab_default\2}/g",
-                PicsartAction.ProMonthly => @"s/content_id\(.,.\)plus_tab_default\(.\)}/content_id\1pro_tab_default\2}/g",
+                PicsartAction.PlusMonthly => "s/\"content_id\":\"pro_tab_default\"}/\"content_id\":\"plus_tab_default\"}/g",
+                PicsartAction.ProMonthly => "s/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g",
                 _ => ""
             };
             string patch = action == PicsartAction.UltraMonthly
@@ -138,54 +138,56 @@ namespace ToolAdb.Features.Picsart
             return result.stdout;
         }
 
+        // Các mẫu dưới đây phải khớp nguyên văn JSON trong settings.json
+        // ("key":"value" phân cách bằng ":"), giữ đúng thứ tự như bản Inapp-Patch gốc.
         private const string PatchMonthly =
-            @"sed -i 's/pro_weekly_100\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
-            @"s/pro_weekly\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
-            @"s/ultra_monthly\(.,.\)is_selected/pro_monthly\1is_selected/g; " +
-            @"s/ultra_yearly\(.,.\)is_selected/pro_yearly_trial\1is_selected/g; " +
-            @"s/plus_weekly\(.,.\)is_selected/plus_monthly\1is_selected/g; " +
-            @"s/package_id\(.,.\)subscription_pro_weekly/package_id\1subscription_pro_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_ultra_monthly/package_id\1subscription_pro_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_plus_weekly/package_id\1subscription_plus_tier_monthly/g; " +
-            @"s/title_12/title_3/g; s/subtitle_8/subtitle_2/g; " +
+            "sed -i 's/\"pro_weekly_100\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
+            "s/\"pro_weekly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
+            "s/\"ultra_monthly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
+            "s/\"ultra_yearly\",\"is_selected\"/\"pro_yearly_trial\",\"is_selected\"/g; " +
+            "s/\"plus_weekly\",\"is_selected\"/\"plus_monthly\",\"is_selected\"/g; " +
+            "s/\"package_id\":\"subscription_pro_weekly\"/\"package_id\":\"subscription_pro_monthly\"/g; " +
+            "s/\"package_id\":\"subscription_ultra_monthly\"/\"package_id\":\"subscription_pro_monthly\"/g; " +
+            "s/\"package_id\":\"subscription_plus_weekly\"/\"package_id\":\"subscription_plus_tier_monthly\"/g; " +
+            "s/title_12/title_3/g; s/subtitle_8/subtitle_2/g; " +
             // Nút pro_monthly mặc định trỏ tới subscription_pro_monthly_100 (chỉ 100 credit/tháng);
             // ép về SKU chuẩn subscription_pro_monthly (500 credit/tháng).
-            @"s/package_sku\(.,.\)subscription_pro_monthly_100/package_sku\1subscription_pro_monthly/g; " +
-            @"s/package_sku\(.,.\)subscription_pro_1_monthly/package_sku\1subscription_pro_monthly/g' " +
+            "s/\"package_sku\":\"subscription_pro_monthly_100\"/\"package_sku\":\"subscription_pro_monthly\"/g; " +
+            "s/\"package_sku\":\"subscription_pro_1_monthly\"/\"package_sku\":\"subscription_pro_monthly\"/g' " +
             DataPath + "/files/settings.json; ";
 
         private const string PatchUltra =
-            @"sed -i 's/package_sku\(.,.\)subscription_ultra_monthly_750_credits/package_sku\1subscription_ultra_monthly/g; " +
-            @"s/package_sku\(.,.\)subscription_ultra_yearly_750_credits/package_sku\1subscription_ultra_yearly/g; " +
-            @"s/pro_weekly_100\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/pro_weekly_100\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
-            @"s/pro_weekly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/pro_weekly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
-            @"s/pro_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/pro_monthly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
-            @"s/plus_weekly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/plus_weekly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
-            @"s/plus_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/plus_monthly\(.,.\)is_selected/ultra_monthly\1is_selected/g; " +
-            @"s/ultra_monthly\(.,.\)is_selected\(.:\)false/ultra_monthly\1is_selected\2true/g; " +
-            @"s/pro_yearly_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
-            @"s/pro_yearly_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
-            @"s/pro_yearly_wo_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
-            @"s/pro_yearly_wo_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
-            @"s/plus_yearly_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
-            @"s/plus_yearly_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
-            @"s/plus_yearly_wo_trial\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
-            @"s/plus_yearly_wo_trial\(.,.\)is_selected/ultra_yearly\1is_selected/g; " +
-            @"s/ultra_yearly\(.,.\)is_selected\(.:\)true/ultra_yearly\1is_selected\2false/g; " +
-            @"s/package_id\(.,.\)subscription_pro_weekly/package_id\1subscription_ultra_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_pro_monthly/package_id\1subscription_ultra_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_plus_weekly/package_id\1subscription_ultra_monthly/g; " +
-            @"s/package_id\(.,.\)subscription_plus_tier_monthly/package_id\1subscription_ultra_monthly/g; " +
-            @"s/content_id\(.,.\)plus_tab_default\(.\)}/content_id\1pro_tab_default\2}/g; " +
-            @"s/content_id\(.,.\)pro_tab_ultra\(.,.\)selected/content_id\1pro_tab_default\2selected/g; " +
-            @"s/content_id\(.,.\)ultra_yearly\(.,.\)badge/content_id\1pro_tab_default\2badge/g; " +
-            @"s/content_id\(.,.\)ultra_yearly_upgrade\(.,.\)selected/content_id\1pro_tab_default\2selected/g; " +
-            @"s/title_3/title_12/g; s/subtitle_2/subtitle_8/g' " +
+            "sed -i 's/\"package_sku\":\"subscription_ultra_monthly_750_credits\"/\"package_sku\":\"subscription_ultra_monthly\"/g; " +
+            "s/\"package_sku\":\"subscription_ultra_yearly_750_credits\"/\"package_sku\":\"subscription_ultra_yearly\"/g; " +
+            "s/\"pro_weekly_100\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"pro_weekly_100\",\"is_selected\"/\"ultra_monthly\",\"is_selected\"/g; " +
+            "s/\"pro_weekly\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"pro_weekly\",\"is_selected\"/\"ultra_monthly\",\"is_selected\"/g; " +
+            "s/\"pro_monthly\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"pro_monthly\",\"is_selected\"/\"ultra_monthly\",\"is_selected\"/g; " +
+            "s/\"plus_weekly\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"plus_weekly\",\"is_selected\"/\"ultra_monthly\",\"is_selected\"/g; " +
+            "s/\"plus_monthly\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"plus_monthly\",\"is_selected\"/\"ultra_monthly\",\"is_selected\"/g; " +
+            "s/\"ultra_monthly\",\"is_selected\":false/\"ultra_monthly\",\"is_selected\":true/g; " +
+            "s/\"pro_yearly_trial\",\"is_selected\":true/\"ultra_yearly\",\"is_selected\":false/g; " +
+            "s/\"pro_yearly_trial\",\"is_selected\"/\"ultra_yearly\",\"is_selected\"/g; " +
+            "s/\"pro_yearly_wo_trial\",\"is_selected\":true/\"ultra_yearly\",\"is_selected\":false/g; " +
+            "s/\"pro_yearly_wo_trial\",\"is_selected\"/\"ultra_yearly\",\"is_selected\"/g; " +
+            "s/\"plus_yearly_trial\",\"is_selected\":true/\"ultra_yearly\",\"is_selected\":false/g; " +
+            "s/\"plus_yearly_trial\",\"is_selected\"/\"ultra_yearly\",\"is_selected\"/g; " +
+            "s/\"plus_yearly_wo_trial\",\"is_selected\":true/\"ultra_yearly\",\"is_selected\":false/g; " +
+            "s/\"plus_yearly_wo_trial\",\"is_selected\"/\"ultra_yearly\",\"is_selected\"/g; " +
+            "s/\"ultra_yearly\",\"is_selected\":true/\"ultra_yearly\",\"is_selected\":false/g; " +
+            "s/\"package_id\":\"subscription_pro_weekly\"/\"package_id\":\"subscription_ultra_monthly\"/g; " +
+            "s/\"package_id\":\"subscription_pro_monthly\"/\"package_id\":\"subscription_ultra_monthly\"/g; " +
+            "s/\"package_id\":\"subscription_plus_weekly\"/\"package_id\":\"subscription_ultra_monthly\"/g; " +
+            "s/\"package_id\":\"subscription_plus_tier_monthly\"/\"package_id\":\"subscription_ultra_monthly\"/g; " +
+            "s/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g; " +
+            "s/\"content_id\":\"pro_tab_ultra\",\"selected\"/\"content_id\":\"pro_tab_default\",\"selected\"/g; " +
+            "s/\"content_id\":\"ultra_yearly\",\"badge\"/\"content_id\":\"pro_tab_default\",\"badge\"/g; " +
+            "s/\"content_id\":\"ultra_yearly_upgrade\",\"selected\"/\"content_id\":\"pro_tab_default\",\"selected\"/g; " +
+            "s/title_3/title_12/g; s/subtitle_2/subtitle_8/g' " +
             DataPath + "/files/settings.json; ";
 
         private const string FixPermissions =
