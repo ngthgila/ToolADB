@@ -32,7 +32,10 @@ namespace ToolAdb.Features.InappTrial
                 throw new ArgumentException("Package không hợp lệ.", nameof(packageName));
 
             EnsureRoot(serial);
-            string preflight = Shell(serial, $"test -f {PlayBillingDb} && echo PLAY_DB_OK; command -v sqlite3");
+            // CaptureAdb vì exit code của chuỗi lệnh là của "command -v sqlite3":
+            // thiết bị thiếu sqlite3 phải rơi vào thông báo bên dưới, không phải lỗi ADB thô.
+            string preflight = CaptureAdb(serial, 15000, "shell",
+                $"test -f {PlayBillingDb} && echo PLAY_DB_OK; command -v sqlite3");
             if (!preflight.Contains("PLAY_DB_OK"))
                 throw new InvalidOperationException("Không tìm thấy sku_details.db của Google Play.");
             if (!preflight.Contains("sqlite3"))

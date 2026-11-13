@@ -41,6 +41,15 @@ namespace ToolAdb.Features.InappTrial
 
         private string Shell(string serial, string command) => Execute(serial, 15000, "shell", command);
 
+        // Ngữ nghĩa giống RunAdb của Inapp-Patch: trả về stdout, không kiểm tra exit code.
+        // Các bước port nguyên văn (Chess, Grammarly) phải dùng hàm này để không đổi hành vi so với mã gốc.
+        private string CaptureAdb(string serial, int timeoutMs, params string[] args)
+        {
+            var command = new List<string> { "-s", serial };
+            command.AddRange(args);
+            return _adb.Capture(command, timeoutMs).stdout ?? "";
+        }
+
         private string Execute(string serial, int timeoutMs, params string[] args)
         {
             var command = new List<string> { "-s", serial };

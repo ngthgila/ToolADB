@@ -87,17 +87,7 @@ namespace ToolAdb.Features.Picsart
             string output = Shell(serial, "set -e; " +
                 $"for file in {DataPath}/shared_prefs/subscription.shared.preferences.xml {DataPath}/files/settings.json; do " +
                 "if [ -f \"$file\" ]; then cat \"$file\"; printf '\\n'; fi; done");
-            string google = Shell(serial, "dumpsys account | grep 'type=com.google' | head -n 1");
-            string picsart = Shell(serial, $"if [ -f {DataPath}/files/user_data ]; then " +
-                $"grep -o '\"email\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' {DataPath}/files/user_data | head -n 1; fi");
-            Match googleAccount = Regex.Match(google, @"name=([^,]+),\s*type=com\.google");
-            Match picsartAccount = Regex.Match(picsart, @"""email""\s*:\s*""([^""]+)""");
-
-            var lines = new List<string>
-            {
-                "👤 Google:  " + (googleAccount.Success ? googleAccount.Groups[1].Value : "chưa đăng nhập"),
-                "🎨 Picsart:  " + (picsartAccount.Success ? picsartAccount.Groups[1].Value : "chưa đăng nhập")
-            };
+            var lines = new List<string>();
 
             var plans = new List<string>();
             if (output.Contains("subscription_ultra_monthly", StringComparison.Ordinal))
