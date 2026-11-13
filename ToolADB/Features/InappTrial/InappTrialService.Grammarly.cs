@@ -1,6 +1,6 @@
-namespace ToolAdb.Features.Picsart
+namespace ToolAdb.Features.InappTrial
 {
-    internal sealed partial class PicsartService
+    internal sealed partial class InappTrialService
     {
         private const string GrammarlyPackage = "com.grammarly.android.keyboard";
         private const string GrammarlyData = "/data/data/" + GrammarlyPackage;

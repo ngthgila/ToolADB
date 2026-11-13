@@ -13,6 +13,7 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Guna.UI2.WinForms;
 using ToolAdb.Features.GeoSpoof;
+using ToolAdb.Features.InappTrial;
 using ToolAdb.Features.Picsart;
 using ToolAdb.Infrastructure;
 using static ToolAdb.UI.DashboardCards;
@@ -362,6 +363,7 @@ namespace ToolAdb
 
             tabControl.TabPages.Add(new GeoSpoofTab(_adb, GetTargetDevices, SetStatus, StartProgress, StopProgress));
             tabControl.TabPages.Add(new PicsartTab(new PicsartService(_adb), GetTargetDevices));
+            tabControl.TabPages.Add(new InappTrialTab(new InappTrialService(_adb), GetTargetDevices));
 
             // Chỉ cần thêm thẳng giao diện chính vào Form
             this.Controls.Add(splitMain);

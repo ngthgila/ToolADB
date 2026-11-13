@@ -31,9 +31,6 @@ namespace ToolAdb.Features.Picsart
             AddAction("Xóa dữ liệu Picsart", PicsartAction.Reset, Color.FromArgb(185, 28, 28),
                 "Thao tác sẽ xóa dữ liệu cục bộ của Picsart, gồm phiên đăng nhập và dữ liệu ứng dụng.");
 
-            AddAction("Grammarly: Tắt trial", PicsartAction.GrammarlyNoTrial, Color.FromArgb(14, 116, 144),
-                "Thao tác sẽ sửa cấu hình thử nghiệm cục bộ và khởi động lại Grammarly.");
-
             _summary = new Label
             {
                 Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(8),

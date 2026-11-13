@@ -4,9 +4,9 @@ using ToolAdb.Infrastructure;
 
 namespace ToolAdb.Features.Picsart
 {
-    internal enum PicsartAction { Inspect, OpenPricing, PlusMonthly, ProMonthly, Reset, ResetKeepLogin, GrammarlyNoTrial }
+    internal enum PicsartAction { Inspect, OpenPricing, PlusMonthly, ProMonthly, Reset, ResetKeepLogin }
 
-    internal sealed partial class PicsartService
+    internal sealed class PicsartService
     {
         private const string Package = "com.picsart.studio";
         private const string DataPath = "/data/data/" + Package;
@@ -24,7 +24,6 @@ namespace ToolAdb.Features.Picsart
 
             EnsureRoot(serial);
             if (action == PicsartAction.Inspect) return Inspect(serial);
-            if (action == PicsartAction.GrammarlyNoTrial) return PatchGrammarlyNoTrial(serial);
 
             string id = "d_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             Shell(serial, "am force-stop " + Package);
