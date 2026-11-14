@@ -8,10 +8,12 @@ namespace ToolAdb.Features.InappTrial
         private static readonly Color Slate = Color.FromArgb(71, 85, 105);
         private static readonly Color Emerald = Color.FromArgb(5, 150, 105);
         private static readonly Color Blue = Color.FromArgb(37, 99, 235);
+        private static readonly Color Fuchsia = Color.FromArgb(192, 38, 211);
 
         private readonly InappTrialService _service;
         private readonly Func<List<string>> _getSelectedDevices;
         private readonly FlowLayoutPanel _actions;
+        private readonly ComboBox _targetPackageBox;
         private readonly DataGridView _results;
         private readonly Label _summary;
 
@@ -40,6 +42,30 @@ namespace ToolAdb.Features.InappTrial
             var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
             _actions.Controls.Add(scanButton);
+
+            _targetPackageBox = new ComboBox
+            {
+                Width = 210,
+                DropDownStyle = ComboBoxStyle.DropDown,
+                Margin = new Padding(4, 7, 4, 4)
+            };
+            _targetPackageBox.Items.AddRange(new object[]
+            {
+                "us.zoom.videomeetings",
+                "com.duolingo",
+                "com.chess",
+                "*"
+            });
+            _targetPackageBox.Text = "us.zoom.videomeetings";
+            _actions.Controls.Add(_targetPackageBox);
+
+            var baseButton = TabUi.ActionButton("📦 Đưa về Gói Gốc (Base)", Slate, 195);
+            baseButton.Click += async (sender, args) => await RunOfferSwitchAsync(false);
+            _actions.Controls.Add(baseButton);
+
+            var winbackButton = TabUi.ActionButton("🎁 Áp dụng Winback", Fuchsia, 175);
+            winbackButton.Click += async (sender, args) => await RunOfferSwitchAsync(true);
+            _actions.Controls.Add(winbackButton);
 
             _summary = TabUi.SummaryLabel("Tích thiết bị ở danh sách bên trái. Các thao tác cần ADB root và sửa dữ liệu cục bộ trên máy.");
             _results = TabUi.ResultsGrid("Kết quả");
@@ -97,6 +123,50 @@ namespace ToolAdb.Features.InappTrial
 
                 if (IsDisposed) return;
                 _summary.Text = $"Hoàn tất {results.Count(result => result.success)}/{targets.Length} thiết bị.";
+            }
+            finally
+            {
+                if (!IsDisposed) _actions.Enabled = true;
+            }
+        }
+
+        private async Task RunOfferSwitchAsync(bool winbackMode)
+        {
+            if (!_actions.Enabled) return;
+
+            string rawPkg = (_targetPackageBox.Text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(rawPkg) || (rawPkg != "*" && !InappTrialService.IsValidPackageName(rawPkg)))
+            {
+                _summary.Text = "Hãy nhập tên package hợp lệ (ví dụ us.zoom.videomeetings) hoặc '*' cho tất cả app trong cache.";
+                return;
+            }
+
+            var targets = _getSelectedDevices().Distinct(StringComparer.Ordinal).ToArray();
+            if (targets.Length == 0)
+            {
+                _summary.Text = "Hãy tích ít nhất một thiết bị ở danh sách bên trái.";
+                return;
+            }
+
+            string label = winbackMode ? "Áp dụng Winback" : "Đưa về Gói Gốc (Base)";
+            _actions.Enabled = false;
+            try
+            {
+                _results.Rows.Clear();
+                foreach (string serial in targets)
+                    _results.Rows.Add(serial, "⏳ Đang chờ…");
+                _summary.Text = $"Đang {label} ({rawPkg}) trên {targets.Length} thiết bị…";
+
+                var results = new (bool success, string message)[targets.Length];
+                await Task.WhenAll(Enumerable.Range(0, targets.Length).Select(i => Task.Run(() =>
+                {
+                    try { results[i] = (true, _service.SwitchOfferMode(targets[i], rawPkg, winbackMode)); }
+                    catch (Exception ex) { results[i] = (false, "❌ Lỗi: " + ex.Message); }
+                    SetRowMessage(i, results[i].message);
+                })));
+
+                if (IsDisposed) return;
+                _summary.Text = $"Hoàn tất {label}: {results.Count(result => result.success)}/{targets.Length} thiết bị.";
             }
             finally
             {
