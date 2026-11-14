@@ -26,55 +26,62 @@ namespace ToolAdb.Features.InappTrial
         internal static bool IsValidPackageName(string packageName) =>
             packageName != null && Regex.IsMatch(packageName, @"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$");
 
+        // Port nguyên văn ScanOffersForDevice của Inapp-Patch/PicsartToolGUI.cs (phần gọi adb):
+        // cùng chuỗi lệnh, thứ tự, timeout; adb gọi qua CaptureAdb (không kiểm tra exit code) như RunAdb gốc.
+        // Phần parse JSON dùng System.Text.Json thay JavaScriptSerializer (.NET Framework) nhưng giữ cùng ngữ nghĩa.
         internal List<BillingOfferInfo> ScanOffers(string serial, string packageName)
         {
             if (!IsValidPackageName(packageName))
                 throw new ArgumentException("Package không hợp lệ.", nameof(packageName));
 
-            EnsureRoot(serial);
-            // CaptureAdb vì exit code của chuỗi lệnh là của "command -v sqlite3":
-            // thiết bị thiếu sqlite3 phải rơi vào thông báo bên dưới, không phải lỗi ADB thô.
-            string preflight = CaptureAdb(serial, 15000, "shell",
-                $"test -f {PlayBillingDb} && echo PLAY_DB_OK; command -v sqlite3");
-            if (!preflight.Contains("PLAY_DB_OK"))
-                throw new InvalidOperationException("Không tìm thấy sku_details.db của Google Play.");
-            if (!preflight.Contains("sqlite3"))
-                throw new InvalidOperationException("Thiết bị không có sqlite3.");
-
+            const string playDb = PlayBillingDb;
+            var result = new List<BillingOfferInfo>();
             string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
             string scanId = Guid.NewGuid().ToString("N");
-            string localSql = Path.Combine(Path.GetTempPath(), $"offer_scan_{safeSerial}_{scanId}.sql");
-            string remoteSql = $"/data/local/tmp/offer_scan_{safeSerial}_{scanId}.sql";
+            string localSql = Path.Combine(Path.GetTempPath(), "offer_scan_" + safeSerial + "_" + scanId + ".sql");
+            string remoteSql = "/data/local/tmp/offer_scan_" + safeSerial + "_" + scanId + ".sql";
 
-            string sql =
-                ".bail on\n" +
-                ".timeout 10000\n" +
-                "SELECT hex(cache_key) || '|' || hex(cache_data) || '|' || expiration_timestamp " +
-                "FROM cache_table WHERE cache_key LIKE '%callingPackageName=" + packageName + "#%' " +
-                "AND (cache_key LIKE '%skuType=subs%' OR cache_key LIKE '%skuType=inapp%') " +
-                "ORDER BY cache_key;\n";
-
-            var result = new List<BillingOfferInfo>();
             try
             {
+                CaptureAdb(serial, 5000, "root");
+                string preflight = CaptureAdb(serial, 8000, "shell",
+                    "test -f " + playDb + " && echo PLAY_DB_OK; command -v sqlite3");
+                if (!preflight.Contains("PLAY_DB_OK"))
+                {
+                    throw new FileNotFoundException("Không tìm thấy sku_details.db của Google Play.");
+                }
+                if (!preflight.Contains("sqlite3"))
+                {
+                    throw new FileNotFoundException("Thiết bị không có sqlite3.");
+                }
+
+                string sql =
+                    ".bail on\n" +
+                    ".timeout 10000\n" +
+                    "SELECT hex(cache_key) || '|' || hex(cache_data) || '|' || expiration_timestamp " +
+                    "FROM cache_table WHERE cache_key LIKE '%callingPackageName=" + packageName + "#%' " +
+                    "AND (cache_key LIKE '%skuType=subs%' OR cache_key LIKE '%skuType=inapp%') " +
+                    "ORDER BY cache_key;\n";
                 File.WriteAllText(localSql, sql, new UTF8Encoding(false));
-                Execute(serial, 10000, "push", localSql, remoteSql);
-                string output = Execute(serial, 30000, "shell", $"sqlite3 {PlayBillingDb} < {remoteSql}");
+                CaptureAdb(serial, 10000, "push", localSql, remoteSql);
+                string output = CaptureAdb(serial, 30000, "shell",
+                    "sqlite3 " + playDb + " < " + remoteSql + "; rm -f " + remoteSql);
+
                 foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                     ParseCacheRow(result, line, serial, packageName);
+
+                return result
+                    .GroupBy(x => string.Join("\u001f", x.Serial, x.ProductType, x.ProductId, x.BasePlanId,
+                        x.OfferId, x.OfferTags, x.Phase.ToString(), x.Price, x.Currency, x.BillingPeriod, x.Recurrence))
+                    .Select(g => g.First())
+                    .OrderBy(x => x.ProductId).ThenBy(x => x.BasePlanId).ThenBy(x => x.OfferId).ThenBy(x => x.Phase)
+                    .ToList();
             }
             finally
             {
-                _adb.RunOnDevice(serial, "shell", $"rm -f {remoteSql}");
-                try { File.Delete(localSql); } catch (IOException) { }
+                CaptureAdb(serial, 3000, "shell", "rm", "-f", remoteSql);
+                try { if (File.Exists(localSql)) File.Delete(localSql); } catch (IOException) { }
             }
-
-            return result
-                .GroupBy(x => string.Join("\u001f", x.Serial, x.ProductType, x.ProductId, x.BasePlanId,
-                    x.OfferId, x.OfferTags, x.Phase.ToString(), x.Price, x.Currency, x.BillingPeriod, x.Recurrence))
-                .Select(g => g.First())
-                .OrderBy(x => x.ProductId).ThenBy(x => x.BasePlanId).ThenBy(x => x.OfferId).ThenBy(x => x.Phase)
-                .ToList();
         }
 
         private static void ParseCacheRow(List<BillingOfferInfo> result, string line, string serial, string packageName)
@@ -210,9 +217,10 @@ namespace ToolAdb.Features.InappTrial
 
         private static string JsonTags(JsonElement element)
         {
-            if (element.ValueKind != JsonValueKind.Object ||
-                !element.TryGetProperty("offerTags", out JsonElement tags) || tags.ValueKind != JsonValueKind.Array)
+            if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty("offerTags", out JsonElement tags))
                 return string.Empty;
+            if (tags.ValueKind == JsonValueKind.String) return tags.GetString() ?? string.Empty;
+            if (tags.ValueKind != JsonValueKind.Array) return string.Empty;
             return string.Join(", ", tags.EnumerateArray()
                 .Where(t => t.ValueKind == JsonValueKind.String)
                 .Select(t => t.GetString())

@@ -34,4 +34,4 @@ Port phải là **bản sao 1:1** của mã gốc: cùng chuỗi lệnh device-s
 python3 tools/verify_port.py ../Inapp-Patch
 ```
 
-Script so sánh máy móc từng chuỗi lệnh Picsart (deeplink/Pro/Ultra/Reset/Reset giữ đăng nhập), Chess (SQL + shell) và Grammarly giữa hai repo; thoát mã 1 nếu có chỗ khác.
+Script so sánh máy móc giữa hai repo: toàn bộ lệnh shell từng mode Picsart (deeplink/Pro/Ultra/Reset/Reset giữ đăng nhập/kiểm tra tài khoản), và **chuỗi gọi adb theo thứ tự + timeout** (root/shell/pull/push) của Chess, Grammarly, quét offer, kèm SQL và hằng hex; thoát mã 1 nếu có chỗ khác.
