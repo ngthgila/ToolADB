@@ -13,7 +13,6 @@ namespace ToolAdb.Features.InappTrial
         private readonly InappTrialService _service;
         private readonly Func<List<string>> _getSelectedDevices;
         private readonly FlowLayoutPanel _actions;
-        private readonly ComboBox _targetPackageBox;
         private readonly DataGridView _results;
         private readonly Label _summary;
 
@@ -44,22 +43,6 @@ namespace ToolAdb.Features.InappTrial
             var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
             _actions.Controls.Add(scanButton);
-
-            _targetPackageBox = new ComboBox
-            {
-                Width = 210,
-                DropDownStyle = ComboBoxStyle.DropDown,
-                Margin = new Padding(4, 7, 4, 4)
-            };
-            _targetPackageBox.Items.AddRange(new object[]
-            {
-                "us.zoom.videomeetings",
-                "com.duolingo",
-                "com.chess",
-                "*"
-            });
-            _targetPackageBox.Text = "us.zoom.videomeetings";
-            _actions.Controls.Add(_targetPackageBox);
 
             var baseButton = TabUi.ActionButton("📦 Đưa về Gói Gốc (Base)", Slate, 195);
             baseButton.Click += async (sender, args) => await RunOfferSwitchAsync(false);
@@ -132,16 +115,27 @@ namespace ToolAdb.Features.InappTrial
             }
         }
 
+        private async Task<DevicePackages[]> FetchPackageListsAsync(string[] targets)
+        {
+            _actions.Enabled = false;
+            _summary.Text = $"Đang đọc danh sách app trên {targets.Length} thiết bị…";
+            try
+            {
+                return await Task.WhenAll(targets.Select(serial => Task.Run(() =>
+                {
+                    try { return _service.ListPackages(serial); }
+                    catch (Exception) { return new DevicePackages(); }
+                })));
+            }
+            finally
+            {
+                if (!IsDisposed) _actions.Enabled = true;
+            }
+        }
+
         private async Task RunOfferSwitchAsync(bool winbackMode)
         {
             if (!_actions.Enabled) return;
-
-            string rawPkg = (_targetPackageBox.Text ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(rawPkg) || (rawPkg != "*" && !InappTrialService.IsValidPackageName(rawPkg)))
-            {
-                _summary.Text = "Hãy nhập tên package hợp lệ (ví dụ us.zoom.videomeetings) hoặc '*' cho tất cả app trong cache.";
-                return;
-            }
 
             var targets = _getSelectedDevices().Distinct(StringComparer.Ordinal).ToArray();
             if (targets.Length == 0)
@@ -150,7 +144,14 @@ namespace ToolAdb.Features.InappTrial
                 return;
             }
 
+            DevicePackages[] packageLists = await FetchPackageListsAsync(targets);
+            if (IsDisposed) return;
+
             string label = winbackMode ? "Áp dụng Winback" : "Đưa về Gói Gốc (Base)";
+            string okText = winbackMode ? "Áp dụng Winback" : "Đưa về Base";
+            string rawPkg = PromptForPackageName(packageLists, $"{label} — Chọn app", okText);
+            if (rawPkg == null) { _summary.Text = $"Đã hủy {label}."; return; }
+
             _actions.Enabled = false;
             try
             {
@@ -187,21 +188,7 @@ namespace ToolAdb.Features.InappTrial
                 return;
             }
 
-            _actions.Enabled = false;
-            _summary.Text = $"Đang đọc danh sách app trên {targets.Length} thiết bị…";
-            DevicePackages[] packageLists;
-            try
-            {
-                packageLists = await Task.WhenAll(targets.Select(serial => Task.Run(() =>
-                {
-                    try { return _service.ListPackages(serial); }
-                    catch (Exception) { return new DevicePackages(); }
-                })));
-            }
-            finally
-            {
-                if (!IsDisposed) _actions.Enabled = true;
-            }
+            DevicePackages[] packageLists = await FetchPackageListsAsync(targets);
             if (IsDisposed) return;
 
             string packageName = PromptForPackageName(packageLists);
@@ -288,14 +275,14 @@ namespace ToolAdb.Features.InappTrial
                 .ToList();
         }
 
-        private string PromptForPackageName(DevicePackages[] lists)
+        private string PromptForPackageName(DevicePackages[] lists, string title = "Quét offer Google Play", string okButtonText = "Quét offer")
         {
             var choices = BuildPackageChoices(lists);
             int cached = choices.Count(c => c.CachedOn > 0);
 
             using var prompt = new Form
             {
-                Text = "Quét offer Google Play",
+                Text = title,
                 ClientSize = new Size(560, 440),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -315,7 +302,7 @@ namespace ToolAdb.Features.InappTrial
                 Text = "★ = đã có cache offer, quét được ngay. App khác: mở paywall trong app một lần rồi quét.",
                 Location = new Point(18, 384), Size = new Size(524, 18), ForeColor = Slate
             };
-            var ok = new Button { Text = "Quét offer", DialogResult = DialogResult.OK, Location = new Point(360, 405), Width = 85 };
+            var ok = new Button { Text = okButtonText, DialogResult = DialogResult.OK, Location = new Point(335, 405), Width = 110 };
             var cancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Location = new Point(455, 405), Width = 85 };
             prompt.Controls.AddRange(new Control[] { label, input, list, hint, ok, cancel });
             prompt.AcceptButton = ok;
