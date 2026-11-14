@@ -27,3 +27,11 @@ Tool quản lý thiết bị Android qua ADB (WinForms, .NET 8, Windows). Gom nh
 ## Quy trình phát triển
 
 Tính năng mới được viết và thử nghiệm trước ở repo [Inapp-Patch](https://github.com/ngthgila/Inapp-Patch) (tool standalone), sau đó port sang ToolADB thành tab/feature tương ứng trong thư mục `ToolADB/Features/`.
+
+Port phải là **bản sao 1:1** của mã gốc: cùng chuỗi lệnh device-side, cùng thứ tự, cùng cách gọi adb (`RunAdb` gốc không kiểm tra exit code → dùng `CaptureAdb`). Sau mỗi lần port, chạy:
+
+```
+python3 tools/verify_port.py ../Inapp-Patch
+```
+
+Script so sánh máy móc từng chuỗi lệnh Picsart (deeplink/Pro/Ultra/Reset/Reset giữ đăng nhập), Chess (SQL + shell) và Grammarly giữa hai repo; thoát mã 1 nếu có chỗ khác.

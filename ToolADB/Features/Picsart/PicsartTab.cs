@@ -32,7 +32,8 @@ namespace ToolAdb.Features.Picsart
             };
             AddAction("🔍 Kiểm tra cấu hình", PicsartAction.Inspect, Slate);
             AddAction("💳 Mở bảng giá", PicsartAction.OpenPricing, Blue);
-            AddAction("💎 Pro tháng (500Cr)", PicsartAction.ProMonthly, Violet);
+            AddAction("💎 Pro tháng (500Cr)", PicsartAction.ProMonthly, Violet,
+                "Thao tác sẽ xóa token thuê bao cũ, đổi device id và ép cấu hình bảng giá sang gói Pro 1 tháng (500 credit).");
             AddAction("🔥 Ultra tháng (1500Cr)", PicsartAction.UltraMonthly, Orange,
                 "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
             AddAction("🔄 Reset giữ đăng nhập", PicsartAction.ResetKeepLogin, Amber,

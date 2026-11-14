@@ -18,7 +18,8 @@ namespace ToolAdb.Features.InappTrial
 
         internal string Run(string serial, InappTrialAction action)
         {
-            EnsureRoot(serial);
+            // Giống ProcessSingleDevice gốc: "adb root" 5 giây, không kiểm tra kết quả.
+            CaptureAdb(serial, 5000, "root");
             return action switch
             {
                 InappTrialAction.GrammarlyNoTrial => PatchGrammarlyNoTrial(serial),
