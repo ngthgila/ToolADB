@@ -86,21 +86,31 @@ namespace ToolAdb.Features.Picsart
                 _summary.Text = $"Đang xử lý {targets.Length} thiết bị…";
 
                 var results = new (bool success, string message)[targets.Length];
-                await Task.Run(() => Parallel.For(0, targets.Length, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
+                // Giống RunActionOnSelectedAsync gốc: mọi máy chạy đồng thời (Task.Run + Task.WhenAll),
+                // máy nào xong thì cập nhật dòng của máy đó ngay.
+                await Task.WhenAll(Enumerable.Range(0, targets.Length).Select(i => Task.Run(() =>
                 {
                     try { results[i] = (true, _service.Run(targets[i], action)); }
                     catch (Exception ex) { results[i] = (false, "❌ Lỗi: " + ex.Message); }
-                }));
+                    SetRowMessage(i, results[i].message);
+                })));
 
                 if (IsDisposed) return;
-                for (int i = 0; i < results.Length; i++)
-                    _results.Rows[i].Cells[1].Value = results[i].message;
                 _summary.Text = $"Hoàn tất {results.Count(result => result.success)}/{targets.Length} thiết bị.";
             }
             finally
             {
                 if (!IsDisposed) _actions.Enabled = true;
             }
+        }
+
+        private void SetRowMessage(int row, string message)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            BeginInvoke(new Action(() =>
+            {
+                if (!IsDisposed && row < _results.Rows.Count) _results.Rows[row].Cells[1].Value = message;
+            }));
         }
     }
 }
