@@ -113,8 +113,25 @@ namespace ToolAdb.Features.InappTrial
                 return;
             }
 
-            string packageName = PromptForPackageName();
-            if (packageName == null) return;
+            _actions.Enabled = false;
+            _summary.Text = $"Đang đọc danh sách app trên {targets.Length} thiết bị…";
+            DevicePackages[] packageLists;
+            try
+            {
+                packageLists = await Task.WhenAll(targets.Select(serial => Task.Run(() =>
+                {
+                    try { return _service.ListPackages(serial); }
+                    catch (Exception) { return new DevicePackages(); }
+                })));
+            }
+            finally
+            {
+                if (!IsDisposed) _actions.Enabled = true;
+            }
+            if (IsDisposed) return;
+
+            string packageName = PromptForPackageName(packageLists);
+            if (packageName == null) { _summary.Text = "Đã hủy quét offer."; return; }
 
             _actions.Enabled = false;
             try
@@ -165,27 +182,98 @@ namespace ToolAdb.Features.InappTrial
             }
         }
 
-        private string PromptForPackageName()
+        private sealed class PackageChoice
         {
+            public string Name;
+            public int InstalledOn;
+            public int CachedOn;
+            public int DeviceCount;
+
+            public override string ToString()
+            {
+                string where = DeviceCount > 1 ? $" ({InstalledOn}/{DeviceCount} máy)" : "";
+                return CachedOn > 0
+                    ? $"★ {Name} — có cache offer{(DeviceCount > 1 ? $" trên {CachedOn}/{DeviceCount} máy" : "")}"
+                    : Name + where;
+            }
+        }
+
+        private static List<PackageChoice> BuildPackageChoices(DevicePackages[] lists)
+        {
+            var names = lists.SelectMany(l => l.Installed.Concat(l.WithOfferCache)).Distinct(StringComparer.Ordinal);
+            return names
+                .Select(name => new PackageChoice
+                {
+                    Name = name,
+                    InstalledOn = lists.Count(l => l.Installed.Contains(name)),
+                    CachedOn = lists.Count(l => l.WithOfferCache.Contains(name)),
+                    DeviceCount = lists.Length
+                })
+                .OrderByDescending(c => c.CachedOn > 0)
+                .ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private string PromptForPackageName(DevicePackages[] lists)
+        {
+            var choices = BuildPackageChoices(lists);
+            int cached = choices.Count(c => c.CachedOn > 0);
+
             using var prompt = new Form
             {
                 Text = "Quét offer Google Play",
-                ClientSize = new Size(520, 145),
+                ClientSize = new Size(560, 440),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false
             };
-            var label = new Label { Text = "Package ứng dụng (ví dụ: com.openai.chatgpt):", Location = new Point(18, 16), AutoSize = true };
-            var input = new TextBox { Text = "com.openai.chatgpt", Location = new Point(20, 43), Width = 478 };
-            var ok = new Button { Text = "Quét offer", DialogResult = DialogResult.OK, Location = new Point(318, 92), Width = 85 };
-            var cancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Location = new Point(413, 92), Width = 85 };
-            prompt.Controls.AddRange(new Control[] { label, input, ok, cancel });
+            var label = new Label
+            {
+                Text = choices.Count == 0
+                    ? "Không đọc được danh sách app. Nhập package thủ công:"
+                    : $"Chọn app ({choices.Count} app, {cached} app có cache offer ★). Gõ để lọc hoặc nhập package khác:",
+                Location = new Point(18, 14), Size = new Size(524, 20)
+            };
+            var input = new TextBox { Location = new Point(20, 38), Width = 520 };
+            var list = new ListBox { Location = new Point(20, 68), Size = new Size(520, 310), IntegralHeight = false };
+            var hint = new Label
+            {
+                Text = "★ = đã có cache offer, quét được ngay. App khác: mở paywall trong app một lần rồi quét.",
+                Location = new Point(18, 384), Size = new Size(524, 18), ForeColor = Slate
+            };
+            var ok = new Button { Text = "Quét offer", DialogResult = DialogResult.OK, Location = new Point(360, 405), Width = 85 };
+            var cancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Location = new Point(455, 405), Width = 85 };
+            prompt.Controls.AddRange(new Control[] { label, input, list, hint, ok, cancel });
             prompt.AcceptButton = ok;
             prompt.CancelButton = cancel;
 
+            void Refill()
+            {
+                string filter = input.Text.Trim();
+                list.BeginUpdate();
+                list.Items.Clear();
+                foreach (var choice in choices)
+                    if (filter.Length == 0 || choice.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                        list.Items.Add(choice);
+                list.EndUpdate();
+                if (list.Items.Count > 0) list.SelectedIndex = 0;
+            }
+            input.TextChanged += (_, _) => Refill();
+            input.KeyDown += (_, e) =>
+            {
+                if (list.Items.Count == 0) return;
+                if (e.KeyCode == Keys.Down) { list.SelectedIndex = Math.Min(list.SelectedIndex + 1, list.Items.Count - 1); e.Handled = true; }
+                else if (e.KeyCode == Keys.Up) { list.SelectedIndex = Math.Max(list.SelectedIndex - 1, 0); e.Handled = true; }
+            };
+            list.DoubleClick += (_, _) => { if (list.SelectedItem != null) prompt.DialogResult = DialogResult.OK; };
+            Refill();
+            prompt.Shown += (_, _) => input.Focus();
+
             if (prompt.ShowDialog(this) != DialogResult.OK) return null;
 
-            string packageName = input.Text.Trim();
+            string typed = input.Text.Trim();
+            // Danh sách chỉ chứa app khớp chữ đã gõ: có dòng được chọn thì dùng dòng đó, không khớp gì thì dùng chữ đã gõ.
+            string packageName = list.SelectedItem is PackageChoice picked ? picked.Name : typed;
             if (!InappTrialService.IsValidPackageName(packageName))
             {
                 MessageBox.Show(this, "Package không hợp lệ. Chỉ dùng chữ, số, dấu gạch dưới và dấu chấm.",
