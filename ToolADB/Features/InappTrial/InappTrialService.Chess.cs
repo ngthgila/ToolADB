@@ -99,7 +99,7 @@ namespace ToolAdb.Features.InappTrial
                 CaptureAdb(serial, 10000, "push", sqlFile, remoteSql);
 
                 string patchOutput = CaptureAdb(serial, 20000, "shell",
-                    "sqlite3 " + playDb + " < " + remoteSql + "; rm -f " + remoteSql);
+                    "sqlite3 " + playDb + " < " + remoteSql + "; rm -f " + remoteSql + "; VUID=$(stat -c '%u' /data/data/com.android.vending); chown $VUID:$VUID " + playDb + "* 2>/dev/null; restorecon " + playDb + "* 2>/dev/null");
                 log.AppendLine("--- sqlite3 output").AppendLine(patchOutput.TrimEnd());
                 string markers = string.Join(", ", Regex.Matches(patchOutput, @"\b[A-Z_]+=\d+").Select(m => m.Value));
                 if (markers.Length == 0) markers = "không có marker nào (sqlite3 không trả output)";

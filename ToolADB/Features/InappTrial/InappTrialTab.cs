@@ -34,6 +34,8 @@ namespace ToolAdb.Features.InappTrial
                 "Thao tác sẽ sửa cấu hình thử nghiệm cục bộ và khởi động lại Grammarly.");
             AddAction("♟ Chess.com: Bỏ trial", InappTrialAction.ChessNoTrial, Blue,
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Chess.com bỏ offer trial, mua thẳng.");
+            AddAction("🦉 Duolingo: Bỏ trial", InappTrialAction.DuolingoNoTrial, Emerald,
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Duolingo bỏ offer trial, mua thẳng.");
 
             var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
