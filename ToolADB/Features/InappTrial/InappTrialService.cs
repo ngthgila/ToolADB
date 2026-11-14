@@ -6,7 +6,8 @@ namespace ToolAdb.Features.InappTrial
     {
         GrammarlyNoTrial,
         ChessNoTrial,
-        DuolingoNoTrial
+        DuolingoNoTrial,
+        ZoomNoTrial
         // Thêm app mới: bổ sung giá trị tại đây, viết InappTrialService.<App>.cs
         // và khai báo nút trong InappTrialTab.
     }
@@ -26,6 +27,7 @@ namespace ToolAdb.Features.InappTrial
                 InappTrialAction.GrammarlyNoTrial => PatchGrammarlyNoTrial(serial),
                 InappTrialAction.ChessNoTrial => PatchChessNoTrial(serial),
                 InappTrialAction.DuolingoNoTrial => PatchDuolingoNoTrial(serial),
+                InappTrialAction.ZoomNoTrial => PatchZoomNoTrial(serial),
                 _ => throw new ArgumentOutOfRangeException(nameof(action))
             };
         }

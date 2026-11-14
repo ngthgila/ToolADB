@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -273,17 +274,18 @@ namespace ToolAdb.Features.InappTrial
                     else if (modeNote == "base" || modeNote == "paid_fallback") baseHits++;
 
                     srcProduct["subscriptionOfferDetails"] = filtered;
-                    string newJson = srcProduct.ToJsonString();
+                    string newJson = srcProduct.ToJsonString(new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
                     byte[] newBlob = RebuildBlobWithNewProductJson(sourceBlob, newJson);
                     if (newBlob == null) continue;
 
                     string newDataHex = BytesToHex(newBlob);
                     patchSql.AppendFormat(
-                        "UPDATE cache_table SET cache_data=X'{0}', expiration_timestamp={1}, space_occupied_in_bytes={2} WHERE cache_key=X'{3}';\n",
+                        "UPDATE cache_table SET cache_data=X'{0}', expiration_timestamp={1}, space_occupied_in_bytes={2} WHERE cache_key=CAST(X'{3}' AS TEXT);\n",
                         newDataHex, farFutureExpiration, newBlob.Length, keyHex);
                     updatedRows++;
                 }
 
+                patchSql.AppendLine("SELECT 'TOUCHED_ROWS=' || total_changes();");
                 patchSql.AppendLine("COMMIT;");
                 patchSql.AppendLine("PRAGMA wal_checkpoint(FULL);");
 
@@ -293,8 +295,11 @@ namespace ToolAdb.Features.InappTrial
                 File.WriteAllText(snapshotFile, JsonSerializer.Serialize(snapshots), new UTF8Encoding(false));
                 File.WriteAllText(localPatchSql, patchSql.ToString(), new UTF8Encoding(false));
                 CaptureAdb(serial, 10000, "push", localPatchSql, remotePatchSql);
-                CaptureAdb(serial, 20000, "shell",
+                string patchOut = CaptureAdb(serial, 20000, "shell",
                     $"sqlite3 {playDb} < {remotePatchSql}; rm -f {remotePatchSql}; VUID=$(stat -c '%u' /data/data/com.android.vending); chown $VUID:$VUID {playDb}* 2>/dev/null; restorecon {playDb}* 2>/dev/null");
+                Match touchedMatch = Regex.Match(patchOut ?? string.Empty, @"TOUCHED_ROWS=(\d+)");
+                if (!touchedMatch.Success || Convert.ToInt32(touchedMatch.Groups[1].Value) == 0)
+                    throw new InvalidDataException("SQLite không cập nhật được dòng nào trong sku_details.db (" + (patchOut ?? string.Empty).Trim() + ").");
 
                 if (packageFilter != "*")
                     CaptureAdb(serial, 8000, "shell", $"monkey -p {packageFilter} -c android.intent.category.LAUNCHER 1");
