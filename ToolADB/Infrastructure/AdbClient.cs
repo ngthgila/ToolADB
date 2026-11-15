@@ -26,11 +26,14 @@ namespace ToolAdb.Infrastructure
             });
         }
 
-        internal int RunOnDevice(string serial, params string[] args)
+        internal int RunOnDevice(string serial, params string[] args) =>
+            RunOnDevice(serial, 30000, args);
+
+        internal int RunOnDevice(string serial, int timeoutMs, params string[] args)
         {
             var command = new List<string> { "-s", serial };
             command.AddRange(args);
-            return Run(command);
+            return Run(command, timeoutMs);
         }
 
         internal static List<string> ParseAdbDevices(string output, string state)

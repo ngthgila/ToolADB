@@ -335,12 +335,24 @@ namespace ToolAdb
             ReflowCardCompact(cardApps, Color.FromArgb(249, 115, 22), flowDash);
 
             var cardSystem = CreateGroupbox("Hệ thống & ADB");
-            AddBtn(cardSystem, "Set Automation IME", Color.FromArgb(168, 85, 247), () => {
+            AddBtn(cardSystem, "Set Automation IME", Color.FromArgb(168, 85, 247), async () => {
                 var targets = GetTargetDevices();
                 if (targets.Count == 0) { SetStatus("No devices selected"); return; }
-                ForceSetAutomationIme(targets);
-                SetStatus($"Set IME OK: {targets.Count} device(s)");
-                MessageBox.Show("Đã set IME cho các máy đã chọn.");
+                SetStatus($"Đang reset & Set IME ({targets.Count} máy)...");
+                StartProgress();
+                var failed = await Task.Run(() => ForceSetAutomationIme(targets));
+                StopProgress();
+                if (failed.Count == 0)
+                {
+                    SetStatus($"Set IME OK: {targets.Count}/{targets.Count} máy");
+                    MessageBox.Show($"Đã reset & set IME thành công cho {targets.Count} máy.");
+                }
+                else
+                {
+                    string summary = string.Join(", ", failed);
+                    SetStatus($"⚠️ Set IME lỗi {failed.Count}/{targets.Count}: {summary}");
+                    MessageBox.Show($"Set IME xong {targets.Count - failed.Count}/{targets.Count} máy.\nMáy lỗi/treo:\n{string.Join(Environment.NewLine, failed)}");
+                }
             });
             AddBtn(cardSystem, "Reboot System", Color.FromArgb(100, 116, 139), async () => await ActionRunAdbOnSelectedAsync("Reboot", "reboot"));
             AddBtn(cardSystem, "Reboot Recovery", Color.FromArgb(124, 58, 237), async () => await ActionRunAdbOnSelectedAsync("Recovery", "reboot recovery"));
@@ -1782,16 +1794,23 @@ setprop sys.powerctl reboot
             if (t.Count == 0) { MessageBox.Show("Chưa chọn thiết bị!"); return; }
             if (l.Length == 0) { MessageBox.Show("Chưa có dữ liệu!"); return; }
             StartProgress();
-            // Giới hạn 4 luồng: tránh bung hàng chục adb.exe cùng lúc dội vào một adb server
-            // (10+ máy) gây nghẽn transport khiến vài máy treo tới ~30s. Đồng bộ với tab Picsart/Inapp Trial.
+            var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
+            int attempted = 0;
+            // Giới hạn 4 luồng + gộp CLEAR/SEND_B64/ENTER vào 1 lệnh adb shell (timeout 5s)
+            // để tránh nghẽn adbd/transport và không giữ luồng tới 30-90s khi 1 máy bị treo.
             await Task.Run(() => Parallel.ForEach(t, new ParallelOptions { MaxDegreeOfParallelism = 4 }, (id, s, i) => {
                 if (i >= l.Length) return;
                 var p = ParseLine(l[i]); var txt = isEmail ? p.email : p.pass;
                 if (string.IsNullOrWhiteSpace(txt)) return;
-                EnsureAutomationIme(id); ImeClearText(id); Thread.Sleep(30); ImeSendText(id, txt.Trim());
-                Thread.Sleep(80); _adb.RunOnDevice(id, "shell", "input", "keyevent", "66");
+                Interlocked.Increment(ref attempted);
+                if (!SendTextViaAutomationIme(id, txt.Trim(), pressEnter: true, out string err))
+                    errors.Add($"{id}: {err}");
             }));
             StopProgress();
+            if (errors.IsEmpty)
+                SetStatus($"Gửi {(isEmail ? "Email" : "Pass")} OK ({attempted} máy).");
+            else
+                SetStatus($"⚠️ Lỗi gửi {(isEmail ? "Email" : "Pass")} ({errors.Count}/{attempted}): {string.Join(" | ", errors)}");
         }
         private (string email, string pass) ParseLine(string l)
         {
@@ -1812,38 +1831,83 @@ setprop sys.powerctl reboot
         private const string AutomationImeSendB64Action = "com.cuong.automationime.SEND_B64";
         private const string AutomationImeClearAction = "com.cuong.automationime.CLEAR_TEXT";
         private const string AutomationImeB64ExtraKey = "b64";
+        private const int TextCommandTimeoutMs = 5000;
         private readonly HashSet<string> _imeEnsured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _imeEnsuredLock = new object();
-        private void EnsureAutomationIme(string deviceId)
+
+        private bool EnsureAutomationIme(string deviceId, out string error)
         {
-            if (string.IsNullOrWhiteSpace(deviceId)) return;
+            error = "";
+            if (string.IsNullOrWhiteSpace(deviceId)) return true;
             // Đã set IME cho máy này thì tin cache, không probe lại mỗi lần gửi.
-            // Probe cũ (settings get) chạy mỗi lần gửi, cộng dồn round-trip adb gây nghẽn khi 10+ máy.
-            // Nếu IME bị đổi ngoài ý muốn, dùng nút "Set IME" (ForceSetAutomationIme) để set lại.
-            lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId)) return; }
-            _adb.RunOnDevice(deviceId, "shell", "ime", "enable", AutomationImeId); _adb.RunOnDevice(deviceId, "shell", "ime", "set", AutomationImeId);
-            lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
-        }
-        // --- 1. XỬ LÝ ADB & IME ---
-        private void ForceSetAutomationIme(IEnumerable<string> deviceIds)
-        {
-            if (deviceIds == null) return;
-            // Chuyển sang chạy song song (Parallel) để set IME nhanh hơn nếu danh sách nhiều máy
-            Parallel.ForEach(deviceIds, id =>
+            // Nếu IME bị treo/đổi ngoài ý muốn, dùng nút "Set Automation IME" (ForceSetAutomationIme) để force-stop & set lại.
+            lock (_imeEnsuredLock) { if (_imeEnsured.Contains(deviceId)) return true; }
+            var res = _adb.Capture(new[]
             {
-                _adb.RunOnDevice(id, "shell", "ime", "enable", AutomationImeId);
-                _adb.RunOnDevice(id, "shell", "ime", "set", AutomationImeId);
-                lock (_imeEnsuredLock) _imeEnsured.Add(id);
-            });
+                "-s", deviceId, "shell",
+                $"ime enable {AutomationImeId} >/dev/null 2>&1; ime set {AutomationImeId}"
+            }, TextCommandTimeoutMs);
+            if (res.exitCode != 0)
+            {
+                error = string.IsNullOrWhiteSpace(res.stderr) ? "Lỗi set IME" : res.stderr.Trim();
+                return false;
+            }
+            lock (_imeEnsuredLock) _imeEnsured.Add(deviceId);
+            return true;
         }
 
-        private void ImeClearText(string deviceId) =>
-            _adb.RunOnDevice(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeClearAction);
-
-        private void ImeSendText(string deviceId, string text)
+        // --- 1. XỬ LÝ ADB & IME ---
+        private List<string> ForceSetAutomationIme(IEnumerable<string> deviceIds)
         {
+            var failed = new System.Collections.Concurrent.ConcurrentBag<string>();
+            if (deviceIds == null) return new List<string>();
+            // force-stop trước khi set để ép Android (nhất là máy chỉ có 1 IME mặc định) giải phóng service IME bị treo/stale.
+            Parallel.ForEach(deviceIds, new ParallelOptions { MaxDegreeOfParallelism = 4 }, id =>
+            {
+                var res = _adb.Capture(new[]
+                {
+                    "-s", id, "shell",
+                    $"am force-stop com.cuong.automationime >/dev/null 2>&1; ime enable {AutomationImeId} >/dev/null 2>&1; ime set {AutomationImeId}"
+                }, TextCommandTimeoutMs);
+                if (res.exitCode == 0)
+                {
+                    lock (_imeEnsuredLock) _imeEnsured.Add(id);
+                }
+                else
+                {
+                    string reason = string.IsNullOrWhiteSpace(res.stderr) ? $"exit {res.exitCode}" : res.stderr.Trim();
+                    failed.Add($"{id} ({reason})");
+                }
+            });
+            return failed.ToList();
+        }
+
+        private bool SendTextViaAutomationIme(string deviceId, string text, bool pressEnter, out string error)
+        {
+            if (!EnsureAutomationIme(deviceId, out error))
+                return false;
+
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? ""));
-            _adb.RunOnDevice(deviceId, "shell", "am", "broadcast", "-n", AutomationImeReceiverComponent, "-a", AutomationImeSendB64Action, "--es", AutomationImeB64ExtraKey, b64);
+            var cmd = new System.Text.StringBuilder();
+            cmd.Append($"am broadcast -n {AutomationImeReceiverComponent} -a {AutomationImeClearAction} >/dev/null");
+            cmd.Append(" && (usleep 30000 2>/dev/null || sleep 0.03 2>/dev/null || true)");
+            cmd.Append($" && am broadcast -n {AutomationImeReceiverComponent} -a {AutomationImeSendB64Action} --es {AutomationImeB64ExtraKey} {b64} >/dev/null");
+            if (pressEnter)
+            {
+                cmd.Append(" && (usleep 60000 2>/dev/null || sleep 0.06 2>/dev/null || true)");
+                cmd.Append(" && input keyevent 66");
+            }
+
+            var res = _adb.Capture(new[] { "-s", deviceId, "shell", cmd.ToString() }, TextCommandTimeoutMs);
+            if (res.exitCode != 0)
+            {
+                // Xóa cache IME để lần sau thử set lại nếu cần, và trả rõ lỗi (vd: quá 5000ms) lên status bar.
+                lock (_imeEnsuredLock) _imeEnsured.Remove(deviceId);
+                error = string.IsNullOrWhiteSpace(res.stderr) ? $"exit {res.exitCode}" : res.stderr.Trim();
+                return false;
+            }
+            error = "";
+            return true;
         }
 
         // --- 2. XỬ LÝ GRID & DATA 2FA ---
@@ -1922,19 +1986,10 @@ setprop sys.powerctl reboot
                 SetStatus($"Sending 2FA to {id}...");
 
                 // Chạy ngầm để giao diện vẫn mượt
-                await Task.Run(() =>
-                {
-                    EnsureAutomationIme(id);
-                    ImeClearText(id);
-                    Thread.Sleep(50); // Delay nhỏ để máy kịp xóa
-                    ImeSendText(id, code);
-                    Thread.Sleep(80);
-                    _adb.RunOnDevice(id, "shell", "input", "keyevent", "66");
-                    // Có thể thêm Enter nếu cần
-                    // _adb.RunOnDevice(id, "shell", "input", "keyevent", "66"); 
-                });
+                string err = "";
+                bool ok = await Task.Run(() => SendTextViaAutomationIme(id, code, pressEnter: true, out err));
 
-                SetStatus($"Sent 2FA to {id}");
+                SetStatus(ok ? $"Sent 2FA to {id}" : $"⚠️ Lỗi gửi 2FA {id}: {err}");
             }
             else
             {
@@ -1967,9 +2022,11 @@ setprop sys.powerctl reboot
             StartProgress();
 
             // BƯỚC 2: Đưa List dữ liệu vào luồng chạy ngầm (An toàn tuyệt đối)
+            var errors = new System.Collections.Concurrent.ConcurrentBag<string>();
+            int attempted = 0;
             await Task.Run(() =>
             {
-                // Giới hạn 4 luồng để không nghẽn adb server khi gửi 2FA cho 10+ máy cùng lúc.
+                // Giới hạn 4 luồng + gộp lệnh + timeout 5s để không nghẽn khi 1 máy bị treo.
                 Parallel.For(0, targets.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i =>
                 {
                     // Chỉ gửi nếu có mã tương ứng với thứ tự máy
@@ -1977,17 +2034,17 @@ setprop sys.powerctl reboot
                     {
                         var id = targets[i];
                         var code = codesToSend[i];
-
-                        EnsureAutomationIme(id);
-                        ImeClearText(id);
-                        Thread.Sleep(50);
-                        ImeSendText(id, code);
+                        Interlocked.Increment(ref attempted);
+                        if (!SendTextViaAutomationIme(id, code, pressEnter: false, out string err))
+                            errors.Add($"{id}: {err}");
                     }
                 });
             });
 
             StopProgress();
-            SetStatus("Sent 2FA Done.");
+            SetStatus(errors.IsEmpty
+                ? $"Sent 2FA Done ({attempted} máy)."
+                : $"⚠️ Lỗi gửi 2FA ({errors.Count}/{attempted}): {string.Join(" | ", errors)}");
         }
 
         // --- 6. CÁC HÀM TÍNH TOÁN TOTP (GIỮ NGUYÊN) ---
