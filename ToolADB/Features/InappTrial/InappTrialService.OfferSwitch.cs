@@ -2,12 +2,19 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 
 namespace ToolAdb.Features.InappTrial
 {
     internal sealed partial class InappTrialService
     {
+        private static readonly JsonSerializerOptions RelaxedJsonOptions = new()
+        {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        };
+
         private static string BytesToHex(byte[] bytes) => Convert.ToHexString(bytes);
 
         private static byte[] HexToBytes(string hex)
@@ -323,11 +330,33 @@ namespace ToolAdb.Features.InappTrial
 
         internal string SwitchOfferMode(string serial, string packageFilter, bool winbackMode)
         {
+            string modeLabel = winbackMode ? "🎁 Winback" : "📦 Gói Gốc (Base)";
+            return RunOfferTransform(
+                serial,
+                packageFilter,
+                (_, srcOffers) =>
+                {
+                    JsonArray filtered = FilterSubscriptionOffers(srcOffers, winbackMode, out string modeNote);
+                    return (filtered, modeNote);
+                },
+                (updatedRows, totalRows, counts) =>
+                {
+                    int winbackHits = counts.GetValueOrDefault("winback");
+                    int baseHits = counts.GetValueOrDefault("base") + counts.GetValueOrDefault("paid_fallback");
+                    return $"✅ {modeLabel} ({packageFilter}): cập nhật {updatedRows}/{totalRows} SKU (Base={baseHits}, Winback={winbackHits}).";
+                });
+        }
+
+        private string RunOfferTransform(
+            string serial,
+            string packageFilter,
+            Func<JsonObject, JsonArray, (JsonArray filtered, string note)> transformOffers,
+            Func<int, int, Dictionary<string, int>, string> formatSummary)
+        {
             if (packageFilter != "*" && !IsValidPackageName(packageFilter))
                 throw new ArgumentException("Tên package không hợp lệ.", nameof(packageFilter));
 
             const string playDb = PlayBillingDb;
-            string modeLabel = winbackMode ? "🎁 Winback" : "📦 Gói Gốc (Base)";
 
             string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
             string snapshotDir = Path.Combine(
@@ -387,8 +416,7 @@ namespace ToolAdb.Features.InappTrial
 
                 int totalRows = 0;
                 int updatedRows = 0;
-                int winbackHits = 0;
-                int baseHits = 0;
+                var noteCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
                 foreach (string line in rawRows.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 {
@@ -420,12 +448,14 @@ namespace ToolAdb.Features.InappTrial
                     if (JsonNode.Parse(srcJson) is not JsonObject srcProduct || srcProduct["subscriptionOfferDetails"] is not JsonArray srcOffers || srcOffers.Count == 0)
                         continue;
 
-                    JsonArray filtered = FilterSubscriptionOffers(srcOffers, winbackMode, out string modeNote);
-                    if (modeNote == "winback") winbackHits++;
-                    else if (modeNote == "base" || modeNote == "paid_fallback") baseHits++;
+                    var (filtered, modeNote) = transformOffers(srcProduct, srcOffers);
+                    if (filtered == null || filtered.Count == 0)
+                        continue;
+                    if (!string.IsNullOrEmpty(modeNote))
+                        noteCounts[modeNote] = noteCounts.GetValueOrDefault(modeNote) + 1;
 
                     srcProduct["subscriptionOfferDetails"] = filtered;
-                    string newJson = srcProduct.ToJsonString(new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                    string newJson = srcProduct.ToJsonString(RelaxedJsonOptions);
                     byte[] newBlob = RebuildBlobWithNewProductJson(sourceBlob, newJson, filtered);
                     if (newBlob == null) continue;
 
@@ -449,6 +479,8 @@ namespace ToolAdb.Features.InappTrial
                 if (totalRows == 0 || updatedRows == 0)
                     throw new InvalidDataException($"Không tìm thấy gói subscription nào của '{packageFilter}' trong sku_details.db. Hãy mở app và màn hình mua hàng trước.");
 
+                string summary = formatSummary(updatedRows, totalRows, noteCounts);
+
                 File.WriteAllText(snapshotFile, JsonSerializer.Serialize(snapshots), new UTF8Encoding(false));
                 File.WriteAllText(localPatchSql, patchSql.ToString(), new UTF8Encoding(false));
                 CaptureAdb(serial, 10000, "push", localPatchSql, remotePatchSql);
@@ -461,7 +493,7 @@ namespace ToolAdb.Features.InappTrial
                 if (packageFilter != "*")
                     CaptureAdb(serial, 8000, "shell", $"monkey -p {packageFilter} -c android.intent.category.LAUNCHER 1");
 
-                return $"✅ {modeLabel} ({packageFilter}): cập nhật {updatedRows}/{totalRows} SKU (Base={baseHits}, Winback={winbackHits}).";
+                return summary;
             }
             finally
             {
