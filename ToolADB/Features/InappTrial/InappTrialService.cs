@@ -7,7 +7,10 @@ namespace ToolAdb.Features.InappTrial
         GrammarlyNoTrial,
         ChessNoTrial,
         DuolingoNoTrial,
-        ZoomNoTrial
+        ZoomNoTrial,
+        CrunchyrollNoTrial,
+        Canva50Off3Months,
+        Canva50OffMonthly
         // Thêm app mới: bổ sung giá trị tại đây, viết InappTrialService.<App>.cs
         // và khai báo nút trong InappTrialTab.
     }
@@ -28,6 +31,9 @@ namespace ToolAdb.Features.InappTrial
                 InappTrialAction.ChessNoTrial => PatchChessNoTrial(serial),
                 InappTrialAction.DuolingoNoTrial => PatchDuolingoNoTrial(serial),
                 InappTrialAction.ZoomNoTrial => PatchZoomNoTrial(serial),
+                InappTrialAction.CrunchyrollNoTrial => PatchCrunchyrollNoTrial(serial),
+                InappTrialAction.Canva50Off3Months => PatchCanva50Off(serial, monthlyInstallments: false),
+                InappTrialAction.Canva50OffMonthly => PatchCanva50Off(serial, monthlyInstallments: true),
                 _ => throw new ArgumentOutOfRangeException(nameof(action))
             };
         }

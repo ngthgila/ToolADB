@@ -176,18 +176,29 @@ def compare_sequence(name, orig_body, port_body):
             o = oc[i] if i < len(oc) else None; p = pc[i] if i < len(pc) else None
             if o != p: print(f'   #{i+1} orig: {o}\n   #{i+1} port: {p}')
 
+def norm_play54_sql(s):
+    # ToolADB bỏ sửa expiration_timestamp và dùng PRAGMA wal_checkpoint(TRUNCATE) trước/sau UPDATE để hỗ trợ Google Play 54.x.
+    s = s.replace(', expiration_timestamp=4102444800000 ', ' ')
+    s = s.replace('PRAGMA wal_checkpoint(FULL);\n', '')
+    s = s.replace('PRAGMA wal_checkpoint(TRUNCATE);\n', '')
+    return s
+
 oc_body = block(orig, r'private void PatchChessNoTrial\(string serial\)', r'private void PatchDuolingoNoTrial')
 pc_body = read(os.path.join(ROOT, 'ToolADB/Features/InappTrial/InappTrialService.Chess.cs'))
 compare_sequence('Chess: chuỗi gọi adb', oc_body, pc_body)
 def sql_of(src, const):
-    body = re.sub(r'"\s*\+\s*' + const + r'\s*\+\s*"', '4102444800000', block(src, r'string sql =\s*', r';\s*\n\s*File\.WriteAllText'))
+    body = re.sub(r'"\s*\+\s*' + const + r'\s*\+\s*"', '4102444800000', block(src, r'string sql =\s*', r';\s*\n\s*(?:File\.WriteAllText|ExecutePlayBillingCachePatch|return ExecutePlayBillingCachePatch)'))
     return assemble(body, {})
-compare('Chess: SQL', sql_of(oc_body, 'farFutureExpiration'), sql_of(pc_body, 'farFutureExpiration'))
+compare('Chess: SQL (Play 54.x norm)', norm_play54_sql(sql_of(oc_body, 'farFutureExpiration')), norm_play54_sql(sql_of(pc_body, 'farFutureExpiration')))
 
 od_body = block(orig, r'private void PatchDuolingoNoTrial\(string serial\)', r'private void CheckAndWarnIfAccountTainted')
 pd_body = read(os.path.join(ROOT, 'ToolADB/Features/InappTrial/InappTrialService.Duolingo.cs'))
 compare_sequence('Duolingo: chuỗi gọi adb', od_body, pd_body)
-compare('Duolingo: SQL', sql_of(od_body, 'farFutureExpiration'), sql_of(pd_body, 'farFutureExpiration'))
+compare('Duolingo: SQL (Play 54.x norm)', norm_play54_sql(sql_of(od_body, 'farFutureExpiration')), norm_play54_sql(sql_of(pd_body, 'farFutureExpiration')))
+
+ocr_body = block(orig, r'private void PatchCrunchyrollNoTrial\(string serial\)', r'private static string BuildCanvaSetOfferTagSql')
+pcr_body = read(os.path.join(ROOT, 'ToolADB/Features/InappTrial/InappTrialService.Crunchyroll.cs'))
+compare('Crunchyroll: SQL (Play 54.x norm)', norm_play54_sql(sql_of(ocr_body, 'farFutureExpiration')), norm_play54_sql(sql_of(pcr_body, 'farFutureExpiration')))
 
 og_body = block(orig, r'private void PatchGrammarlyNoTrial\(string serial\)', r'private void PatchChessNoTrial')
 pg_body = read(os.path.join(ROOT, 'ToolADB/Features/InappTrial/InappTrialService.Grammarly.cs'))

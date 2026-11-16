@@ -1346,7 +1346,7 @@ setprop sys.powerctl reboot
             try
             {
                 if (!automatic) SetStatus("Đang quét thiết bị...");
-                var result = await Task.Run(() => _adb.Capture(new[] { "devices" }, timeoutMs: 5000));
+                var result = await Task.Run(() => _adb.Capture(new[] { "devices" }, timeoutMs: 10000));
                 if (IsDisposed || Disposing) return;
 
                 if (result.exitCode != 0)
@@ -1831,7 +1831,7 @@ setprop sys.powerctl reboot
         private const string AutomationImeSendB64Action = "com.cuong.automationime.SEND_B64";
         private const string AutomationImeClearAction = "com.cuong.automationime.CLEAR_TEXT";
         private const string AutomationImeB64ExtraKey = "b64";
-        private const int TextCommandTimeoutMs = 5000;
+        private const int TextCommandTimeoutMs = 12000;
         private readonly HashSet<string> _imeEnsured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _imeEnsuredLock = new object();
 
@@ -1845,7 +1845,7 @@ setprop sys.powerctl reboot
             var res = _adb.Capture(new[]
             {
                 "-s", deviceId, "shell",
-                $"ime enable {AutomationImeId} >/dev/null 2>&1; ime set {AutomationImeId}"
+                $"ime set {AutomationImeId} >/dev/null 2>&1 || (ime enable {AutomationImeId} >/dev/null 2>&1 && ime set {AutomationImeId})"
             }, TextCommandTimeoutMs);
             if (res.exitCode != 0)
             {
@@ -1867,7 +1867,7 @@ setprop sys.powerctl reboot
                 var res = _adb.Capture(new[]
                 {
                     "-s", id, "shell",
-                    $"am force-stop com.cuong.automationime >/dev/null 2>&1; ime enable {AutomationImeId} >/dev/null 2>&1; ime set {AutomationImeId}"
+                    $"am force-stop com.cuong.automationime >/dev/null 2>&1; ime set {AutomationImeId} >/dev/null 2>&1 || (ime enable {AutomationImeId} >/dev/null 2>&1 && ime set {AutomationImeId})"
                 }, TextCommandTimeoutMs);
                 if (res.exitCode == 0)
                 {
@@ -1889,9 +1889,10 @@ setprop sys.powerctl reboot
 
             var b64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text ?? ""));
             var cmd = new System.Text.StringBuilder();
-            cmd.Append($"am broadcast -n {AutomationImeReceiverComponent} -a {AutomationImeClearAction} >/dev/null");
+            // Dùng -f 0x10000000 (FLAG_RECEIVER_FOREGROUND) để tránh bị delay trong background broadcast queue của Android.
+            cmd.Append($"am broadcast -f 0x10000000 -n {AutomationImeReceiverComponent} -a {AutomationImeClearAction} >/dev/null");
             cmd.Append(" && (usleep 30000 2>/dev/null || sleep 0.03 2>/dev/null || true)");
-            cmd.Append($" && am broadcast -n {AutomationImeReceiverComponent} -a {AutomationImeSendB64Action} --es {AutomationImeB64ExtraKey} {b64} >/dev/null");
+            cmd.Append($" && am broadcast -f 0x10000000 -n {AutomationImeReceiverComponent} -a {AutomationImeSendB64Action} --es {AutomationImeB64ExtraKey} {b64} >/dev/null");
             if (pressEnter)
             {
                 cmd.Append(" && (usleep 60000 2>/dev/null || sleep 0.06 2>/dev/null || true)");
@@ -1901,7 +1902,7 @@ setprop sys.powerctl reboot
             var res = _adb.Capture(new[] { "-s", deviceId, "shell", cmd.ToString() }, TextCommandTimeoutMs);
             if (res.exitCode != 0)
             {
-                // Xóa cache IME để lần sau thử set lại nếu cần, và trả rõ lỗi (vd: quá 5000ms) lên status bar.
+                // Xóa cache IME để lần sau thử set lại nếu cần, và trả rõ lỗi (vd: quá 12000ms) lên status bar.
                 lock (_imeEnsuredLock) _imeEnsured.Remove(deviceId);
                 error = string.IsNullOrWhiteSpace(res.stderr) ? $"exit {res.exitCode}" : res.stderr.Trim();
                 return false;

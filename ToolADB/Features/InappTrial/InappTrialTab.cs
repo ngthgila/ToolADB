@@ -9,6 +9,9 @@ namespace ToolAdb.Features.InappTrial
         private static readonly Color Emerald = Color.FromArgb(5, 150, 105);
         private static readonly Color Blue = Color.FromArgb(37, 99, 235);
         private static readonly Color Fuchsia = Color.FromArgb(192, 38, 211);
+        private static readonly Color Orange = Color.FromArgb(234, 88, 12);
+        private static readonly Color Violet = Color.FromArgb(124, 58, 237);
+        private static readonly Color Teal = Color.FromArgb(13, 148, 136);
 
         private readonly InappTrialService _service;
         private readonly Func<List<string>> _getSelectedDevices;
@@ -39,6 +42,12 @@ namespace ToolAdb.Features.InappTrial
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Duolingo bỏ offer trial, mua thẳng.");
             AddAction("📹 Zoom: Bỏ trial", InappTrialAction.ZoomNoTrial, Blue,
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để Zoom bỏ offer trial/winback, giữ gói gốc mua thẳng.");
+            AddAction("🍙 Crunchyroll: Bỏ trial", InappTrialAction.CrunchyrollNoTrial, Orange,
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Crunchyroll bỏ offer trial, giữ base plan mua thẳng.");
+            AddAction("🎨 Canva: Giảm 50% (Trả 1 lần 3T)", InappTrialAction.Canva50Off3Months, Violet,
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva giảm 50% (trả 1 lần dùng 3 tháng).", 240);
+            AddAction("🎨 Canva Biz: Giảm 50% (Thu từng tháng)", InappTrialAction.Canva50OffMonthly, Teal,
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Business giảm 50% (thu từng tháng x3).", 265);
 
             var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
@@ -65,9 +74,9 @@ namespace ToolAdb.Features.InappTrial
             Controls.Add(layout);
         }
 
-        private void AddAction(string text, InappTrialAction action, Color color, string confirmation = null)
+        private void AddAction(string text, InappTrialAction action, Color color, string confirmation = null, int width = 180)
         {
-            var button = TabUi.ActionButton(text, color, 180);
+            var button = TabUi.ActionButton(text, color, width);
             button.Click += async (sender, args) => await RunAsync(action, confirmation);
             _actions.Controls.Add(button);
         }

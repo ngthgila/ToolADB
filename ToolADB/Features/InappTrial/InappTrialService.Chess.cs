@@ -15,7 +15,6 @@ namespace ToolAdb.Features.InappTrial
         private string PatchChessNoTrial(string serial)
         {
             const string playDb = PlayBillingDb;
-            const string farFutureExpiration = "4102444800000"; // 2100-01-01 UTC
 
             string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
             string backupDir = Path.Combine(
@@ -62,9 +61,11 @@ namespace ToolAdb.Features.InappTrial
 
                 // Chess ưu tiên offerId từ incentive, sau đó offerId "freetrial", rồi mới tới base plan.
                 // Đổi nhãn trial bằng chuỗi cùng độ dài giữ nguyên framing protobuf trong BLOB cache.
+                // Không sửa expiration_timestamp và chạy wal_checkpoint(TRUNCATE) để tương thích Google Play 54.x.
                 string sql =
                     ".bail on\n" +
                     ".timeout 10000\n" +
+                    "PRAGMA wal_checkpoint(TRUNCATE);\n" +
                     "SELECT 'CHESS_CACHE_ROWS=' || count(*) FROM cache_table " +
                     "WHERE cache_key LIKE '%callingPackageName=com.chess%' AND cache_key LIKE '%skuType=subs%';\n" +
                     "SELECT 'BYTES_BEFORE=' || ifnull(sum(length(cache_data)),0) FROM cache_table " +
@@ -73,8 +74,7 @@ namespace ToolAdb.Features.InappTrial
                     "UPDATE cache_table SET " +
                     "cache_data=CAST(replace(replace(CAST(cache_data AS TEXT)," +
                     "'\"offerId\":\"freetrial\"','\"offerId\":\"notrialxx\"')," +
-                    "'free7days','no7trials') AS BLOB), " +
-                    "expiration_timestamp=" + farFutureExpiration + " " +
+                    "'free7days','no7trials') AS BLOB) " +
                     "WHERE cache_key LIKE '%callingPackageName=com.chess%' " +
                     "AND cache_key LIKE '%skuType=subs%' " +
                     "AND (instr(cache_data,'\"offerId\":\"freetrial\"')>0 " +
@@ -83,7 +83,7 @@ namespace ToolAdb.Features.InappTrial
                     "OR instr(cache_data,'no7trials')>0);\n" +
                     "SELECT 'TOUCHED_ROWS=' || changes();\n" +
                     "COMMIT;\n" +
-                    "PRAGMA wal_checkpoint(FULL);\n" +
+                    "PRAGMA wal_checkpoint(TRUNCATE);\n" +
                     "SELECT 'TRIAL_REMAINING=' || count(*) FROM cache_table " +
                     "WHERE cache_key LIKE '%callingPackageName=com.chess%' " +
                     "AND (instr(cache_data,'\"offerId\":\"freetrial\"')>0 OR instr(cache_data,'free7days')>0);\n" +

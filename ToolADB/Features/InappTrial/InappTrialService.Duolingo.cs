@@ -11,7 +11,6 @@ namespace ToolAdb.Features.InappTrial
         private string PatchDuolingoNoTrial(string serial)
         {
             const string playDb = PlayBillingDb;
-            const string farFutureExpiration = "4102444800000"; // 2100-01-01 UTC
 
             string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
             string backupDir = Path.Combine(
@@ -59,9 +58,11 @@ namespace ToolAdb.Features.InappTrial
                 // Duolingo (u9c.a / w9c.j) tìm offerId "freetrial", "fpp2026-intro" hoặc "1m-extended-ft"
                 // trước khi rơi xuống base plan (1 pricingPhase có priceAmountMicros > 0).
                 // Đổi nhãn trial bằng chuỗi cùng độ dài giữ nguyên framing protobuf trong BLOB cache.
+                // Không sửa expiration_timestamp và chạy wal_checkpoint(TRUNCATE) để tương thích Google Play 54.x.
                 string sql =
                     ".bail on\n" +
                     ".timeout 10000\n" +
+                    "PRAGMA wal_checkpoint(TRUNCATE);\n" +
                     "SELECT 'DUOLINGO_CACHE_ROWS=' || count(*) FROM cache_table " +
                     "WHERE cache_key LIKE '%callingPackageName=com.duolingo%' AND cache_key LIKE '%skuType=subs%';\n" +
                     "SELECT 'BYTES_BEFORE=' || ifnull(sum(length(cache_data)),0) FROM cache_table " +
@@ -71,8 +72,7 @@ namespace ToolAdb.Features.InappTrial
                     "cache_data=CAST(replace(replace(replace(CAST(cache_data AS TEXT)," +
                     "'\"offerId\":\"freetrial\"','\"offerId\":\"notrialxx\"')," +
                     "'\"offerId\":\"1m-extended-ft\"','\"offerId\":\"1m-notrialx-ft\"')," +
-                    "'\"offerId\":\"fpp2026-intro\"','\"offerId\":\"notrial-intro\"') AS BLOB), " +
-                    "expiration_timestamp=" + farFutureExpiration + " " +
+                    "'\"offerId\":\"fpp2026-intro\"','\"offerId\":\"notrial-intro\"') AS BLOB) " +
                     "WHERE cache_key LIKE '%callingPackageName=com.duolingo%' " +
                     "AND cache_key LIKE '%skuType=subs%' " +
                     "AND (instr(cache_data,'\"offerId\":\"freetrial\"')>0 " +
@@ -83,7 +83,7 @@ namespace ToolAdb.Features.InappTrial
                     "OR instr(cache_data,'\"offerId\":\"notrial-intro\"')>0);\n" +
                     "SELECT 'TOUCHED_ROWS=' || changes();\n" +
                     "COMMIT;\n" +
-                    "PRAGMA wal_checkpoint(FULL);\n" +
+                    "PRAGMA wal_checkpoint(TRUNCATE);\n" +
                     "SELECT 'TRIAL_REMAINING=' || count(*) FROM cache_table " +
                     "WHERE cache_key LIKE '%callingPackageName=com.duolingo%' " +
                     "AND (instr(cache_data,'\"offerId\":\"freetrial\"')>0 " +

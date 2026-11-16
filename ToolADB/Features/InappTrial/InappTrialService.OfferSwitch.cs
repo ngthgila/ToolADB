@@ -17,15 +17,15 @@ namespace ToolAdb.Features.InappTrial
             return Convert.FromHexString(hex);
         }
 
-        private static bool TryReadProtobufVarint(byte[] buf, int pos, out int value, out int nextPos)
+        private static bool TryReadProtobufVarint64(byte[] buf, int pos, out ulong value, out int nextPos)
         {
             value = 0;
             nextPos = pos;
             int shift = 0;
-            while (nextPos < buf.Length && shift < 35)
+            while (nextPos < buf.Length && shift < 70)
             {
                 byte b = buf[nextPos++];
-                value |= (b & 0x7F) << shift;
+                value |= (ulong)(b & 0x7F) << shift;
                 if ((b & 0x80) == 0)
                     return true;
                 shift += 7;
@@ -33,68 +33,217 @@ namespace ToolAdb.Features.InappTrial
             return false;
         }
 
-        private static byte[] EncodeProtobufVarint(int value)
+        private static byte[] EncodeProtobufVarint64(ulong value)
         {
             var bytes = new List<byte>();
-            uint v = (uint)value;
-            while (v >= 0x80)
+            while (value >= 0x80)
             {
-                bytes.Add((byte)((v & 0x7F) | 0x80));
-                v >>= 7;
+                bytes.Add((byte)((value & 0x7F) | 0x80));
+                value >>= 7;
             }
-            bytes.Add((byte)v);
+            bytes.Add((byte)value);
             return bytes.ToArray();
         }
 
-        private static bool TryExtractProductJsonFromBlob(byte[] blob, out string jsonText, out int outerLen, out int outerPayloadStart, out int jsonStart, out int jsonLen)
+        private readonly struct ProtobufField
+        {
+            internal readonly int FieldNumber;
+            internal readonly int WireType;
+            internal readonly ulong Scalar;
+            internal readonly byte[] Bytes;
+
+            internal ProtobufField(int fieldNumber, int wireType, ulong scalar, byte[] bytes)
+            {
+                FieldNumber = fieldNumber;
+                WireType = wireType;
+                Scalar = scalar;
+                Bytes = bytes;
+            }
+        }
+
+        private static bool TryDecodeProtobufFields(byte[] buf, out List<ProtobufField> fields)
+        {
+            fields = new List<ProtobufField>();
+            if (buf == null || buf.Length == 0)
+                return false;
+
+            int i = 0;
+            while (i < buf.Length)
+            {
+                if (!TryReadProtobufVarint64(buf, i, out ulong tag, out i))
+                    return false;
+                int fn = (int)(tag >> 3);
+                int wt = (int)(tag & 7);
+                if (fn <= 0)
+                    return false;
+
+                switch (wt)
+                {
+                    case 0:
+                        if (!TryReadProtobufVarint64(buf, i, out ulong v, out i))
+                            return false;
+                        fields.Add(new ProtobufField(fn, wt, v, null));
+                        break;
+                    case 1:
+                        if (i + 8 > buf.Length) return false;
+                        byte[] fixed64 = new byte[8];
+                        Buffer.BlockCopy(buf, i, fixed64, 0, 8);
+                        i += 8;
+                        fields.Add(new ProtobufField(fn, wt, 0, fixed64));
+                        break;
+                    case 2:
+                        if (!TryReadProtobufVarint64(buf, i, out ulong len64, out i))
+                            return false;
+                        if (len64 > (ulong)(buf.Length - i))
+                            return false;
+                        int len = (int)len64;
+                        byte[] payload = new byte[len];
+                        Buffer.BlockCopy(buf, i, payload, 0, len);
+                        i += len;
+                        fields.Add(new ProtobufField(fn, wt, 0, payload));
+                        break;
+                    case 5:
+                        if (i + 4 > buf.Length) return false;
+                        byte[] fixed32 = new byte[4];
+                        Buffer.BlockCopy(buf, i, fixed32, 0, 4);
+                        i += 4;
+                        fields.Add(new ProtobufField(fn, wt, 0, fixed32));
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        private static byte[] EncodeProtobufFields(List<ProtobufField> fields)
+        {
+            using var ms = new MemoryStream();
+            foreach (var f in fields)
+            {
+                byte[] tag = EncodeProtobufVarint64((ulong)((f.FieldNumber << 3) | f.WireType));
+                ms.Write(tag, 0, tag.Length);
+                switch (f.WireType)
+                {
+                    case 0:
+                        byte[] v = EncodeProtobufVarint64(f.Scalar);
+                        ms.Write(v, 0, v.Length);
+                        break;
+                    case 1:
+                    case 5:
+                        ms.Write(f.Bytes, 0, f.Bytes.Length);
+                        break;
+                    case 2:
+                        byte[] len = EncodeProtobufVarint64((ulong)f.Bytes.Length);
+                        ms.Write(len, 0, len.Length);
+                        ms.Write(f.Bytes, 0, f.Bytes.Length);
+                        break;
+                }
+            }
+            return ms.ToArray();
+        }
+
+        private static bool TryExtractProductJsonFromBlob(byte[] blob, out string jsonText)
         {
             jsonText = null;
-            outerLen = 0;
-            outerPayloadStart = 0;
-            jsonStart = 0;
-            jsonLen = 0;
-
-            if (blob == null || blob.Length < 6 || blob[0] != 0x0A)
+            if (!TryDecodeProtobufFields(blob, out var outer))
                 return false;
-            if (!TryReadProtobufVarint(blob, 1, out outerLen, out outerPayloadStart))
+            int f1Idx = outer.FindIndex(f => f.FieldNumber == 1 && f.WireType == 2);
+            if (f1Idx < 0 || !TryDecodeProtobufFields(outer[f1Idx].Bytes, out var f1Fields))
                 return false;
-            if (outerPayloadStart + outerLen > blob.Length || outerPayloadStart >= blob.Length || blob[outerPayloadStart] != 0x0A)
-                return false;
-            if (!TryReadProtobufVarint(blob, outerPayloadStart + 1, out jsonLen, out jsonStart))
-                return false;
-            if (jsonLen <= 0 || jsonStart + jsonLen > outerPayloadStart + outerLen)
+            int jsonIdx = f1Fields.FindIndex(f => f.FieldNumber == 1 && f.WireType == 2);
+            if (jsonIdx < 0 || f1Fields[jsonIdx].Bytes.Length == 0)
                 return false;
 
-            jsonText = Encoding.UTF8.GetString(blob, jsonStart, jsonLen);
+            jsonText = Encoding.UTF8.GetString(f1Fields[jsonIdx].Bytes);
             return jsonText.StartsWith("{", StringComparison.Ordinal) && jsonText.EndsWith("}", StringComparison.Ordinal);
         }
 
-        private static byte[] RebuildBlobWithNewProductJson(byte[] originalBlob, string newJsonText)
+        private static List<ProtobufField> SelectMatchingOfferSubmessages(List<ProtobufField> f2Items, JsonArray keptOffers)
         {
-            if (!TryExtractProductJsonFromBlob(originalBlob, out _, out int outerLen, out int outerPayloadStart, out int jsonStart, out int jsonLen))
+            if (f2Items.Count == 0 || keptOffers == null || keptOffers.Count == 0)
+                return f2Items;
+
+            var used = new bool[f2Items.Count];
+            var selected = new List<ProtobufField>();
+
+            foreach (JsonNode node in keptOffers)
+            {
+                string token = node?["offerIdToken"]?.GetValue<string>();
+                if (string.IsNullOrEmpty(token)) continue;
+                byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
+
+                int matchIdx = -1;
+                for (int i = 0; i < f2Items.Count; i++)
+                {
+                    if (!used[i] && f2Items[i].Bytes.AsSpan().IndexOf(tokenBytes) >= 0)
+                    {
+                        matchIdx = i;
+                        used[i] = true;
+                        break;
+                    }
+                }
+                if (matchIdx < 0)
+                {
+                    for (int i = 0; i < f2Items.Count; i++)
+                    {
+                        if (f2Items[i].Bytes.AsSpan().IndexOf(tokenBytes) >= 0)
+                        {
+                            matchIdx = i;
+                            break;
+                        }
+                    }
+                }
+                if (matchIdx >= 0)
+                    selected.Add(f2Items[matchIdx]);
+            }
+
+            return selected.Count > 0 ? selected : f2Items;
+        }
+
+        // Cập nhật f1.f1 (JSON ProductDetails) và đồng bộ lại mảng f1.f2[] (offer submessages trên Play 54.x),
+        // đồng thời giữ nguyên các trường khác (f1.f3, f3 timestamp...).
+        private static byte[] RebuildBlobWithNewProductJson(byte[] originalBlob, string newJsonText, JsonArray keptOffers)
+        {
+            if (!TryDecodeProtobufFields(originalBlob, out var outer))
+                return null;
+            int f1Idx = outer.FindIndex(f => f.FieldNumber == 1 && f.WireType == 2);
+            if (f1Idx < 0 || !TryDecodeProtobufFields(outer[f1Idx].Bytes, out var f1Fields))
+                return null;
+            int jsonIdx = f1Fields.FindIndex(f => f.FieldNumber == 1 && f.WireType == 2);
+            if (jsonIdx < 0)
                 return null;
 
-            byte[] newJsonBytes = Encoding.UTF8.GetBytes(newJsonText);
-            byte[] newJsonLenVarint = EncodeProtobufVarint(newJsonBytes.Length);
-            int restOfOuterLen = (outerPayloadStart + outerLen) - (jsonStart + jsonLen);
-            int newOuterLen = 1 + newJsonLenVarint.Length + newJsonBytes.Length + restOfOuterLen;
-            byte[] newOuterLenVarint = EncodeProtobufVarint(newOuterLen);
+            var f2Items = f1Fields.Where(f => f.FieldNumber == 2 && f.WireType == 2).ToList();
+            var matchedF2 = SelectMatchingOfferSubmessages(f2Items, keptOffers);
 
-            int trailingStart = jsonStart + jsonLen;
-            int trailingLen = originalBlob.Length - trailingStart;
-            byte[] rebuilt = new byte[1 + newOuterLenVarint.Length + 1 + newJsonLenVarint.Length + newJsonBytes.Length + trailingLen];
-            int offset = 0;
-            rebuilt[offset++] = 0x0A;
-            Buffer.BlockCopy(newOuterLenVarint, 0, rebuilt, offset, newOuterLenVarint.Length);
-            offset += newOuterLenVarint.Length;
-            rebuilt[offset++] = 0x0A;
-            Buffer.BlockCopy(newJsonLenVarint, 0, rebuilt, offset, newJsonLenVarint.Length);
-            offset += newJsonLenVarint.Length;
-            Buffer.BlockCopy(newJsonBytes, 0, rebuilt, offset, newJsonBytes.Length);
-            offset += newJsonBytes.Length;
-            if (trailingLen > 0)
-                Buffer.BlockCopy(originalBlob, trailingStart, rebuilt, offset, trailingLen);
-            return rebuilt;
+            byte[] newJsonBytes = Encoding.UTF8.GetBytes(newJsonText);
+            var newF1Fields = new List<ProtobufField>(f1Fields.Count);
+            bool f2Inserted = false;
+
+            for (int i = 0; i < f1Fields.Count; i++)
+            {
+                var field = f1Fields[i];
+                if (i == jsonIdx)
+                {
+                    newF1Fields.Add(new ProtobufField(1, 2, 0, newJsonBytes));
+                    continue;
+                }
+                if (field.FieldNumber == 2 && field.WireType == 2)
+                {
+                    if (!f2Inserted)
+                    {
+                        newF1Fields.AddRange(matchedF2);
+                        f2Inserted = true;
+                    }
+                    continue;
+                }
+                newF1Fields.Add(field);
+            }
+
+            byte[] newF1Bytes = EncodeProtobufFields(newF1Fields);
+            outer[f1Idx] = new ProtobufField(1, 2, 0, newF1Bytes);
+            return EncodeProtobufFields(outer);
         }
 
         private static bool HasFreePricingPhase(JsonObject offer)
@@ -178,7 +327,6 @@ namespace ToolAdb.Features.InappTrial
                 throw new ArgumentException("Tên package không hợp lệ.", nameof(packageFilter));
 
             const string playDb = PlayBillingDb;
-            const string farFutureExpiration = "4102444800000";
             string modeLabel = winbackMode ? "🎁 Winback" : "📦 Gói Gốc (Base)";
 
             string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
@@ -214,7 +362,8 @@ namespace ToolAdb.Features.InappTrial
                 string querySql =
                     ".bail on\n" +
                     ".timeout 10000\n" +
-                    "SELECT hex(cache_key) || '|' || hex(cache_data) FROM cache_table WHERE " + whereClause + ";\n";
+                    "PRAGMA wal_checkpoint(TRUNCATE);\n" +
+                    "SELECT hex(cache_key) || '|' || hex(cache_data) || '|' || ifnull(space_occupied_in_bytes, 0) FROM cache_table WHERE " + whereClause + ";\n";
                 File.WriteAllText(localQuerySql, querySql, new UTF8Encoding(false));
                 CaptureAdb(serial, 10000, "push", localQuerySql, remoteQuerySql);
                 string rawRows = CaptureAdb(serial, 20000, "shell", $"sqlite3 {playDb} < {remoteQuerySql}; rm -f {remoteQuerySql}");
@@ -233,6 +382,7 @@ namespace ToolAdb.Features.InappTrial
                 var patchSql = new StringBuilder();
                 patchSql.AppendLine(".bail on");
                 patchSql.AppendLine(".timeout 10000");
+                patchSql.AppendLine("PRAGMA wal_checkpoint(TRUNCATE);");
                 patchSql.AppendLine("BEGIN IMMEDIATE;");
 
                 int totalRows = 0;
@@ -242,15 +392,16 @@ namespace ToolAdb.Features.InappTrial
 
                 foreach (string line in rawRows.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                 {
-                    string[] parts = line.Split('|', 2);
-                    if (parts.Length != 2) continue;
+                    string[] parts = line.Split('|', 3);
+                    if (parts.Length < 2) continue;
                     string keyHex = parts[0].Trim();
                     string currentDataHex = parts[1].Trim();
+                    int oldSpace = (parts.Length >= 3 && int.TryParse(parts[2].Trim(), out int parsedSpace)) ? parsedSpace : 0;
                     if (string.IsNullOrEmpty(keyHex) || string.IsNullOrEmpty(currentDataHex)) continue;
                     totalRows++;
 
                     byte[] currentBlob = HexToBytes(currentDataHex);
-                    if (!TryExtractProductJsonFromBlob(currentBlob, out string curJson, out _, out _, out _, out _))
+                    if (!TryExtractProductJsonFromBlob(currentBlob, out string curJson))
                         continue;
 
                     if (JsonNode.Parse(curJson) is not JsonObject curProduct || curProduct["subscriptionOfferDetails"] is not JsonArray curOffers || curOffers.Count == 0)
@@ -260,7 +411,7 @@ namespace ToolAdb.Features.InappTrial
                         snapshots[keyHex] = currentDataHex;
 
                     byte[] sourceBlob = snapshots.TryGetValue(keyHex, out string snapHex) ? HexToBytes(snapHex) : currentBlob;
-                    if (!TryExtractProductJsonFromBlob(sourceBlob, out string srcJson, out _, out _, out _, out _))
+                    if (!TryExtractProductJsonFromBlob(sourceBlob, out string srcJson))
                     {
                         sourceBlob = currentBlob;
                         srcJson = curJson;
@@ -275,19 +426,25 @@ namespace ToolAdb.Features.InappTrial
 
                     srcProduct["subscriptionOfferDetails"] = filtered;
                     string newJson = srcProduct.ToJsonString(new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-                    byte[] newBlob = RebuildBlobWithNewProductJson(sourceBlob, newJson);
+                    byte[] newBlob = RebuildBlobWithNewProductJson(sourceBlob, newJson, filtered);
                     if (newBlob == null) continue;
 
                     string newDataHex = BytesToHex(newBlob);
+                    int keyLen = keyHex.Length / 2;
+                    int newSpace = oldSpace > 0
+                        ? Math.Max(newBlob.Length, oldSpace + (newBlob.Length - currentBlob.Length))
+                        : keyLen + newBlob.Length + 24;
+
+                    // Giữ nguyên expiration_timestamp vì Play 54.x phát hiện sửa TTL và fetch đè lại ngay từ server.
                     patchSql.AppendFormat(
-                        "UPDATE cache_table SET cache_data=X'{0}', expiration_timestamp={1}, space_occupied_in_bytes={2} WHERE cache_key=CAST(X'{3}' AS TEXT);\n",
-                        newDataHex, farFutureExpiration, newBlob.Length, keyHex);
+                        "UPDATE cache_table SET cache_data=X'{0}', space_occupied_in_bytes={1} WHERE cache_key=CAST(X'{2}' AS TEXT);\n",
+                        newDataHex, newSpace, keyHex);
                     updatedRows++;
                 }
 
                 patchSql.AppendLine("SELECT 'TOUCHED_ROWS=' || total_changes();");
                 patchSql.AppendLine("COMMIT;");
-                patchSql.AppendLine("PRAGMA wal_checkpoint(FULL);");
+                patchSql.AppendLine("PRAGMA wal_checkpoint(TRUNCATE);");
 
                 if (totalRows == 0 || updatedRows == 0)
                     throw new InvalidDataException($"Không tìm thấy gói subscription nào của '{packageFilter}' trong sku_details.db. Hãy mở app và màn hình mua hàng trước.");
