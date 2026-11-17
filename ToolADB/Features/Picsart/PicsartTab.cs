@@ -7,7 +7,10 @@ namespace ToolAdb.Features.Picsart
         // Bảng màu: xám = chỉ đọc, xanh dương = mở app, tím/cam = ép gói, hổ phách/đỏ = thao tác xóa.
         private static readonly Color Slate = Color.FromArgb(71, 85, 105);
         private static readonly Color Blue = Color.FromArgb(37, 99, 235);
+        private static readonly Color Teal = Color.FromArgb(14, 116, 144);
+        private static readonly Color Emerald = Color.FromArgb(5, 150, 105);
         private static readonly Color Violet = Color.FromArgb(124, 58, 237);
+        private static readonly Color Fuchsia = Color.FromArgb(192, 38, 211);
         private static readonly Color Orange = Color.FromArgb(234, 88, 12);
         private static readonly Color Amber = Color.FromArgb(180, 83, 9);
         private static readonly Color Red = Color.FromArgb(220, 38, 38);
@@ -36,6 +39,14 @@ namespace ToolAdb.Features.Picsart
                 "Thao tác sẽ xóa token thuê bao cũ, đổi device id và ép cấu hình bảng giá sang gói Pro 1 tháng (500 credit).");
             AddAction("🔥 Ultra tháng (1500Cr)", PicsartAction.UltraMonthly, Orange,
                 "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
+            AddAction("🏆 Pro Năm (38.99 TRY)", PicsartAction.Pro5Yearly, Emerald,
+                "Thao tác sẽ xóa token thuê bao cũ và ép bảng giá sang gói Pro Năm siêu rẻ (subscription_pro_5_yearly - TRY 38.99/năm).", 195);
+            AddAction("⚡ Pro Năm 78/155 TRY", PicsartAction.Pro4YearlyIntro, Violet,
+                "Thao tác sẽ xóa token thuê bao cũ, ép gói Pro Năm Intro (subscription_pro_4_yearly) và ghim offer intro-price (TRY 78.00/năm × 2 năm nếu acc còn đủ điều kiện).", 195);
+            AddAction("🎁 Pro Năm BF 50% (120 TRY)", PicsartAction.ProBf2026Yearly, Fuchsia,
+                "Thao tác sẽ xóa token thuê bao cũ, ép gói BF2026 (sub_pro_yearly_250_winback_bf2026) và ghim offer discount-50 (TRY 120.00/năm nếu acc đủ điều kiện, gốc 239.99).", 215);
+            AddAction("🆓 Pro Trial 7N (132.5 TRY)", PicsartAction.Pro1YearlyTrial, Teal,
+                "Thao tác sẽ xóa token thuê bao cũ và ép gói Pro Năm Trial 7 ngày (subscription_pro_1_yearly - gia hạn sau trial TRY 132.50/năm).", 205);
             AddAction("🔄 Reset giữ đăng nhập", PicsartAction.ResetKeepLogin, Amber,
                 "Thao tác sẽ đổi ID ứng dụng và sửa hoặc xóa cache thuê bao cục bộ.");
             AddAction("🧹 Xóa dữ liệu Picsart", PicsartAction.Reset, Red,
@@ -54,9 +65,9 @@ namespace ToolAdb.Features.Picsart
             Controls.Add(layout);
         }
 
-        private void AddAction(string text, PicsartAction action, Color color, string confirmation = null)
+        private void AddAction(string text, PicsartAction action, Color color, string confirmation = null, int width = 180)
         {
-            var button = TabUi.ActionButton(text, color, 180);
+            var button = TabUi.ActionButton(text, color, width);
             button.Click += async (sender, args) => await RunAsync(action, confirmation);
             _actions.Controls.Add(button);
         }

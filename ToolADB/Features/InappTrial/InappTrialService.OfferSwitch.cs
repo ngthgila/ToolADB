@@ -347,11 +347,40 @@ namespace ToolAdb.Features.InappTrial
                 });
         }
 
+        internal bool PinSingleOfferForSkuIfCached(string serial, string packageFilter, string skuId, string preferredOfferId)
+        {
+            if (string.IsNullOrEmpty(skuId) || string.IsNullOrEmpty(preferredOfferId))
+                return false;
+
+            string result = RunOfferTransform(
+                serial,
+                packageFilter,
+                (_, srcOffers) =>
+                {
+                    foreach (JsonNode node in srcOffers)
+                    {
+                        if (node is not JsonObject obj) continue;
+                        string oid = obj["offerId"]?.GetValue<string>() ?? string.Empty;
+                        if (string.Equals(oid, preferredOfferId, StringComparison.Ordinal))
+                            return (new JsonArray { obj.DeepClone() }, "pinned");
+                    }
+                    return (null, null);
+                },
+                (updatedRows, _, counts) => counts.GetValueOrDefault("pinned") > 0 ? $"OK:{updatedRows}" : null,
+                skuIdFilter: skuId,
+                relaunchApp: false,
+                throwIfNotFound: false);
+            return !string.IsNullOrEmpty(result);
+        }
+
         private string RunOfferTransform(
             string serial,
             string packageFilter,
             Func<JsonObject, JsonArray, (JsonArray filtered, string note)> transformOffers,
-            Func<int, int, Dictionary<string, int>, string> formatSummary)
+            Func<int, int, Dictionary<string, int>, string> formatSummary,
+            string skuIdFilter = null,
+            bool relaunchApp = true,
+            bool throwIfNotFound = true)
         {
             if (packageFilter != "*" && !IsValidPackageName(packageFilter))
                 throw new ArgumentException("Tên package không hợp lệ.", nameof(packageFilter));
@@ -375,9 +404,15 @@ namespace ToolAdb.Features.InappTrial
                 string preflight = CaptureAdb(serial, 8000, "shell",
                     "test -f " + playDb + " && echo PLAY_DB_OK; command -v sqlite3");
                 if (!preflight.Contains("PLAY_DB_OK"))
+                {
+                    if (!throwIfNotFound) return null;
                     throw new FileNotFoundException("Chưa có sku_details.db. Hãy mở app và màn hình mua hàng một lần trước.");
+                }
                 if (!preflight.Contains("sqlite3"))
+                {
+                    if (!throwIfNotFound) return null;
                     throw new FileNotFoundException("Thiết bị không có sqlite3.");
+                }
 
                 string stopCmd = packageFilter == "*"
                     ? "am force-stop com.android.vending"
@@ -387,6 +422,8 @@ namespace ToolAdb.Features.InappTrial
                 string whereClause = packageFilter == "*"
                     ? "cache_key LIKE '%callingPackageName=%' AND cache_key LIKE '%skuType=subs%'"
                     : $"cache_key LIKE '%callingPackageName={packageFilter}#%' AND cache_key LIKE '%skuType=subs%'";
+                if (!string.IsNullOrEmpty(skuIdFilter))
+                    whereClause += $" AND cache_key LIKE '%skuId={skuIdFilter}#%'";
 
                 string querySql =
                     ".bail on\n" +
@@ -477,9 +514,14 @@ namespace ToolAdb.Features.InappTrial
                 patchSql.AppendLine("PRAGMA wal_checkpoint(TRUNCATE);");
 
                 if (totalRows == 0 || updatedRows == 0)
+                {
+                    if (!throwIfNotFound) return null;
                     throw new InvalidDataException($"Không tìm thấy gói subscription nào của '{packageFilter}' trong sku_details.db. Hãy mở app và màn hình mua hàng trước.");
+                }
 
                 string summary = formatSummary(updatedRows, totalRows, noteCounts);
+                if (string.IsNullOrEmpty(summary))
+                    return null;
 
                 File.WriteAllText(snapshotFile, JsonSerializer.Serialize(snapshots), new UTF8Encoding(false));
                 File.WriteAllText(localPatchSql, patchSql.ToString(), new UTF8Encoding(false));
@@ -490,7 +532,7 @@ namespace ToolAdb.Features.InappTrial
                 if (!touchedMatch.Success || Convert.ToInt32(touchedMatch.Groups[1].Value) == 0)
                     throw new InvalidDataException("SQLite không cập nhật được dòng nào trong sku_details.db (" + (patchOut ?? string.Empty).Trim() + ").");
 
-                if (packageFilter != "*")
+                if (relaunchApp && packageFilter != "*")
                     CaptureAdb(serial, 8000, "shell", $"monkey -p {packageFilter} -c android.intent.category.LAUNCHER 1");
 
                 return summary;
