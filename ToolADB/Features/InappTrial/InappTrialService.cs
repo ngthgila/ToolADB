@@ -10,7 +10,12 @@ namespace ToolAdb.Features.InappTrial
         ZoomNoTrial,
         CrunchyrollNoTrial,
         Canva50Off3Months,
-        Canva50OffMonthly
+        Canva50OffMonthly,
+        CamScanner80Try,
+        CamScanner99Try,
+        CamScanner149Try,
+        BlinkistPro90Off,
+        InShotYearly50Off
         // Thêm app mới: bổ sung giá trị tại đây, viết InappTrialService.<App>.cs
         // và khai báo nút trong InappTrialTab.
     }
@@ -34,6 +39,11 @@ namespace ToolAdb.Features.InappTrial
                 InappTrialAction.CrunchyrollNoTrial => PatchCrunchyrollNoTrial(serial),
                 InappTrialAction.Canva50Off3Months => PatchCanva50Off(serial, monthlyInstallments: false),
                 InappTrialAction.Canva50OffMonthly => PatchCanva50Off(serial, monthlyInstallments: true),
+                InappTrialAction.CamScanner80Try => PatchCamScannerOffer(serial, CamScannerNewYearlySku, "cs-developer-40percent-p1y", "TRY 80.00/năm", priceListStyle: 124),
+                InappTrialAction.CamScanner99Try => PatchCamScannerOffer(serial, CamScannerNewYearlySku, "cs-developer-60percent-p1y", "TRY 99.00/năm", priceListStyle: 124),
+                InappTrialAction.CamScanner149Try => PatchCamScannerOffer(serial, CamScannerGuide2YearlySku, "firstyeardiscount", "TRY 149.00/năm", priceListStyle: 113),
+                InappTrialAction.BlinkistPro90Off => PatchBlinkistPro90Off(serial),
+                InappTrialAction.InShotYearly50Off => PatchInShotYearly50Off(serial),
                 _ => throw new ArgumentOutOfRangeException(nameof(action))
             };
         }

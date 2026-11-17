@@ -166,6 +166,28 @@ namespace ToolAdb.Features.InappTrial
             return jsonText.StartsWith("{", StringComparison.Ordinal) && jsonText.EndsWith("}", StringComparison.Ordinal);
         }
 
+        private static byte[] TryBuildOfferSubmessage(byte[] templateF2, byte[] tokenBytes)
+        {
+            if (templateF2 == null || tokenBytes == null || tokenBytes.Length == 0)
+                return null;
+            if (!TryDecodeProtobufFields(templateF2, out var outer) || outer.Count != 1)
+                return null;
+            if (outer[0].FieldNumber != 1 || outer[0].WireType != 2)
+                return null;
+            if (!TryDecodeProtobufFields(outer[0].Bytes, out var inner))
+                return null;
+
+            int tokenIdx = inner.FindIndex(f => f.FieldNumber == 2 && f.WireType == 2);
+            if (tokenIdx < 0)
+                return null;
+
+            inner[tokenIdx] = new ProtobufField(2, 2, 0, tokenBytes);
+            return EncodeProtobufFields(new List<ProtobufField>
+            {
+                new ProtobufField(1, 2, 0, EncodeProtobufFields(inner))
+            });
+        }
+
         private static List<ProtobufField> SelectMatchingOfferSubmessages(List<ProtobufField> f2Items, JsonArray keptOffers)
         {
             if (f2Items.Count == 0 || keptOffers == null || keptOffers.Count == 0)
@@ -202,7 +224,16 @@ namespace ToolAdb.Features.InappTrial
                     }
                 }
                 if (matchIdx >= 0)
+                {
                     selected.Add(f2Items[matchIdx]);
+                    continue;
+                }
+
+                // Play 54.x đôi khi chỉ cache sẵn f2[] cho N offer đầu (vd chỉ các offer free-trial trên CamScanner).
+                // Nếu offer mục tiêu nằm ngoài danh sách đó, dựng f2 khớp token từ mẫu f2[0] để Play không fallback về trial.
+                byte[] synthesized = TryBuildOfferSubmessage(f2Items[0].Bytes, tokenBytes);
+                if (synthesized != null)
+                    selected.Add(new ProtobufField(2, 2, 0, synthesized));
             }
 
             return selected.Count > 0 ? selected : f2Items;

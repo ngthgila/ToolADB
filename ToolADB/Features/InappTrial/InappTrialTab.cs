@@ -13,11 +13,15 @@ namespace ToolAdb.Features.InappTrial
         private static readonly Color Violet = Color.FromArgb(124, 58, 237);
         private static readonly Color Teal = Color.FromArgb(13, 148, 136);
 
+        private const int ButtonWidth = 160;
+        private const int ButtonHeight = 40;
+
         private readonly InappTrialService _service;
         private readonly Func<List<string>> _getSelectedDevices;
         private readonly FlowLayoutPanel _actions;
         private readonly DataGridView _results;
         private readonly Label _summary;
+        private readonly ToolTip _toolTip = new();
 
         internal InappTrialTab(InappTrialService service, Func<List<string>> getSelectedDevices)
         {
@@ -34,30 +38,55 @@ namespace ToolAdb.Features.InappTrial
 
             // Danh sách app bỏ trial. Thêm app mới: thêm một dòng AddAction tại đây,
             // thêm giá trị enum trong InappTrialService.cs và file InappTrialService.<App>.cs.
-            AddAction("🟢 Grammarly: Tắt trial", InappTrialAction.GrammarlyNoTrial, Emerald,
+            AddAction("Tắt trial", InappTrialAction.GrammarlyNoTrial, Emerald, "grammarly.png",
+                "Grammarly: Tắt trial",
                 "Thao tác sẽ sửa cấu hình thử nghiệm cục bộ và khởi động lại Grammarly.");
-            AddAction("♟ Chess.com: Bỏ trial", InappTrialAction.ChessNoTrial, Blue,
+            AddAction("Bỏ trial", InappTrialAction.ChessNoTrial, Blue, "chess.png",
+                "Chess.com: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Chess.com bỏ offer trial, mua thẳng.");
-            AddAction("🦉 Duolingo: Bỏ trial", InappTrialAction.DuolingoNoTrial, Emerald,
+            AddAction("Bỏ trial", InappTrialAction.DuolingoNoTrial, Emerald, "duolingo.png",
+                "Duolingo: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Duolingo bỏ offer trial, mua thẳng.");
-            AddAction("📹 Zoom: Bỏ trial", InappTrialAction.ZoomNoTrial, Blue,
+            AddAction("Bỏ trial", InappTrialAction.ZoomNoTrial, Blue, "zoom.png",
+                "Zoom: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để Zoom bỏ offer trial/winback, giữ gói gốc mua thẳng.");
-            AddAction("🍙 Crunchyroll: Bỏ trial", InappTrialAction.CrunchyrollNoTrial, Orange,
+            AddAction("Bỏ trial", InappTrialAction.CrunchyrollNoTrial, Orange, "crunchyroll.png",
+                "Crunchyroll: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Crunchyroll bỏ offer trial, giữ base plan mua thẳng.");
-            AddAction("🎨 Canva: Giảm 50% (Trả 1 lần 3T)", InappTrialAction.Canva50Off3Months, Violet,
-                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva giảm 50% (trả 1 lần dùng 3 tháng).", 240);
-            AddAction("🎨 Canva Biz: Giảm 50% (Thu từng tháng)", InappTrialAction.Canva50OffMonthly, Teal,
-                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Business giảm 50% (thu từng tháng x3).", 265);
+            AddAction("Giảm 50% (3T)", InappTrialAction.Canva50Off3Months, Violet, "canva.png",
+                "Canva: Giảm 50% (Trả 1 lần 3 tháng)",
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva giảm 50% (trả 1 lần dùng 3 tháng).");
+            AddAction("50% Biz (3T)", InappTrialAction.Canva50OffMonthly, Teal, "canva.png",
+                "Canva Business: Giảm 50% (Thu từng tháng x3)",
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Business giảm 50% (thu từng tháng x3).");
+            AddAction("Năm 80 TRY", InappTrialAction.CamScanner80Try, Teal, "camscanner.png",
+                "CamScanner: Gói năm 80 TRY (bỏ trial - trả tiền luôn)",
+                "Thao tác sẽ ghim offer 'cs-developer-40percent-p1y' (TRY 80.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
+            AddAction("Năm 99 TRY", InappTrialAction.CamScanner99Try, Blue, "camscanner.png",
+                "CamScanner: Gói năm 99 TRY (bỏ trial - trả tiền luôn)",
+                "Thao tác sẽ ghim offer 'cs-developer-60percent-p1y' (TRY 99.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
+            AddAction("Năm 149 TRY", InappTrialAction.CamScanner149Try, Slate, "camscanner.png",
+                "CamScanner: Gói năm 149 TRY (bỏ trial - trả tiền luôn)",
+                "Thao tác sẽ ghim offer 'firstyeardiscount' (TRY 149.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
+            AddAction("Pro 84 TRY (90%)", InappTrialAction.BlinkistPro90Off, Emerald, "blinkist.png",
+                "Blinkist Pro: Giảm 90% còn 84 TRY/năm (bỏ trial)",
+                "Thao tác sẽ ép cấu hình paywall Blinkist sang gói Pro 1 năm giảm 90% (TRY 84.00/năm đầu, không trial) và khởi động lại app.");
+            AddAction("Năm 250 TRY (50%)", InappTrialAction.InShotYearly50Off, System.Drawing.Color.FromArgb(225, 29, 72), "inshot.png",
+                "InShot Pro: Năm 250 TRY / giảm 50% (bỏ trial)",
+                "Thao tác sẽ ghim offer 'discount-yearly-winback' (giảm 50% năm đầu, VD TRY 250.00/năm, bỏ trial) cho InShot và khởi động lại app.");
 
-            var scanButton = TabUi.ActionButton("🔎 GPlay: Quét mọi offer", Slate, 180);
+            var scanButton = TabUi.ActionButton("Quét offer", Slate, ButtonWidth, TabUi.LoadAppIcon("googleplay.png"), ButtonHeight);
+            _toolTip.SetToolTip(scanButton, "Google Play: Quét mọi offer");
             scanButton.Click += async (sender, args) => await ScanOffersAsync();
             _actions.Controls.Add(scanButton);
 
-            var baseButton = TabUi.ActionButton("📦 Đưa về Gói Gốc (Base)", Slate, 195);
+            var baseButton = TabUi.ActionButton("Về gói Base", Slate, ButtonWidth, TabUi.LoadAppIcon("base.png"), ButtonHeight);
+            _toolTip.SetToolTip(baseButton, "Đưa về Gói Gốc (Base)");
             baseButton.Click += async (sender, args) => await RunOfferSwitchAsync(false);
             _actions.Controls.Add(baseButton);
 
-            var winbackButton = TabUi.ActionButton("🎁 Áp dụng Winback", Fuchsia, 175);
+            var winbackButton = TabUi.ActionButton("Winback", Fuchsia, ButtonWidth, TabUi.LoadAppIcon("winback.png"), ButtonHeight);
+            _toolTip.SetToolTip(winbackButton, "Áp dụng Winback");
             winbackButton.Click += async (sender, args) => await RunOfferSwitchAsync(true);
             _actions.Controls.Add(winbackButton);
 
@@ -74,9 +103,10 @@ namespace ToolAdb.Features.InappTrial
             Controls.Add(layout);
         }
 
-        private void AddAction(string text, InappTrialAction action, Color color, string confirmation = null, int width = 180)
+        private void AddAction(string text, InappTrialAction action, Color color, string iconFile, string tooltip, string confirmation = null)
         {
-            var button = TabUi.ActionButton(text, color, width);
+            var button = TabUi.ActionButton(text, color, ButtonWidth, TabUi.LoadAppIcon(iconFile), ButtonHeight);
+            _toolTip.SetToolTip(button, tooltip);
             button.Click += async (sender, args) => await RunAsync(action, confirmation);
             _actions.Controls.Add(button);
         }

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using Guna.UI2.WinForms;
 
 namespace ToolAdb.UI
@@ -5,15 +7,43 @@ namespace ToolAdb.UI
     // Giao diện thống nhất cho các tab feature: nút hành động và bảng kết quả.
     internal static class TabUi
     {
-        internal static Guna2Button ActionButton(string text, Color color, int width = 170)
+        private static readonly ConcurrentDictionary<string, Image> IconCache = new(StringComparer.OrdinalIgnoreCase);
+
+        internal static Image LoadAppIcon(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return null;
+            return IconCache.GetOrAdd(fileName, static name =>
+            {
+                Assembly asm = Assembly.GetExecutingAssembly();
+                string resName = asm.GetManifestResourceNames()
+                    .FirstOrDefault(n => n.EndsWith("." + name, StringComparison.OrdinalIgnoreCase));
+                if (resName == null) return null;
+                using Stream stream = asm.GetManifestResourceStream(resName);
+                if (stream == null) return null;
+                using var temp = Image.FromStream(stream);
+                return new Bitmap(temp);
+            });
+        }
+
+        internal static Guna2Button ActionButton(string text, Color color, int width = 170, Image icon = null, int height = 38)
         {
             var button = new Guna2Button
             {
-                Text = text, Height = 38, Width = width, BorderRadius = 6,
+                Text = text, Height = height, Width = width, BorderRadius = 6,
                 FillColor = color, ForeColor = Color.White,
                 Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(4)
+                Margin = new Padding(4),
+                Cursor = Cursors.Hand
             };
+            if (icon != null)
+            {
+                button.Image = icon;
+                button.ImageSize = new Size(22, 22);
+                button.ImageAlign = HorizontalAlignment.Left;
+                button.TextAlign = HorizontalAlignment.Left;
+                button.ImageOffset = new Point(6, 0);
+                button.TextOffset = new Point(4, 0);
+            }
             button.HoverState.FillColor = Darken(color);
             return button;
         }

@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <None Remove="icon.ico" />
+    <EmbeddedResource Include="icons\apps\*.png" />
   </ItemGroup>
 
   <ItemGroup>
