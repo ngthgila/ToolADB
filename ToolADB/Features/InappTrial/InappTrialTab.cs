@@ -64,7 +64,7 @@ namespace ToolAdb.Features.InappTrial
                 "Thao tác sẽ ghim offer 'firstyeardiscount' (TRY 149.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
             AddAction("Pro 84 TRY (90%)", InappTrialAction.BlinkistPro90Off, Emerald, "blinkist.png",
                 "Blinkist Pro: Giảm 90% còn 84 TRY/năm (bỏ trial)",
-                "Thao tác sẽ ép cấu hình paywall Blinkist sang gói Pro 1 năm giảm 90% (TRY 84.00/năm đầu, không trial) và khởi động lại app.");
+                "Thao tác sẽ gọi thẳng deeplink paywall Pro 1 năm giảm 90% (TRY 84.00/năm đầu, không trial) trên Blinkist.");
             AddAction("Năm 250 TRY (50%)", InappTrialAction.InShotYearly50Off, System.Drawing.Color.FromArgb(225, 29, 72), "inshot.png",
                 "InShot Pro: Năm 250 TRY / giảm 50% (bỏ trial)",
                 "Thao tác sẽ ghim offer 'discount-yearly-winback' (giảm 50% năm đầu, VD TRY 250.00/năm, bỏ trial) cho InShot và khởi động lại app.");
