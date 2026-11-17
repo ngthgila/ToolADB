@@ -134,7 +134,7 @@ namespace ToolAdb.Features.Picsart
             }
         }
 
-        private static readonly string[] PromoReplaceableSkus =
+        private static readonly string[] PromoYearlySkus =
         {
             "subscription_pro_yearly_250_credit_2",
             "subscription_pro_yearly_250_winback",
@@ -143,17 +143,8 @@ namespace ToolAdb.Features.Picsart
             "subscription_pro_yearly_wo_trial",
             "subscription_pro_yearly_no_trial",
             "subscription_pro_yearly",
-            "subscription_pro_monthly_100",
-            "subscription_pro_1_monthly",
-            "subscription_pro_monthly",
-            "subscription_pro_weekly_100",
-            "subscription_pro_weekly",
             "subscription_plus_tier_yearly",
             "subscription_plus_yearly_without_trial",
-            "subscription_plus_tier_monthly",
-            "subscription_plus_weekly",
-            "subscription_ultra_monthly",
-            "subscription_ultra_monthly_750_credits",
             "subscription_ultra_yearly",
             "subscription_ultra_yearly_750_credits",
             "subscription_pro_5_yearly",
@@ -165,12 +156,24 @@ namespace ToolAdb.Features.Picsart
         private static string BuildPromoSettingsSed(string targetSku, bool isProTab)
         {
             var sed = new StringBuilder();
-            foreach (string src in PromoReplaceableSkus)
+            // Khôi phục trạng thái chọn mặc định (gói năm được chọn, gói tuần/tháng bỏ chọn) nếu trước đó user đã bấm Ép Ultra/Pro tháng,
+            // và chỉ thay thế các SKU gói năm để nút radio thứ 2 không bị trùng SKU với gói năm (tránh lỗi chọn cả 2 gói cùng lúc).
+            sed.Append("s/\"ultra_yearly\",\"is_selected\":false/\"pro_yearly_trial\",\"is_selected\":true/g; ");
+            sed.Append("s/\"pro_yearly_trial\",\"is_selected\":false/\"pro_yearly_trial\",\"is_selected\":true/g; ");
+            sed.Append("s/\"ultra_monthly\",\"is_selected\":true/\"pro_weekly_100\",\"is_selected\":false/g; ");
+            sed.Append("s/\"pro_monthly\",\"is_selected\":true/\"pro_weekly_100\",\"is_selected\":false/g; ");
+            sed.Append("s/\"pro_weekly_100\",\"is_selected\":true/\"pro_weekly_100\",\"is_selected\":false/g; ");
+
+            foreach (string src in PromoYearlySkus)
             {
                 if (src == targetSku) continue;
                 sed.Append("s/\"package_sku\":\"").Append(src).Append("\"/\"package_sku\":\"").Append(targetSku).Append("\"/g; ");
                 sed.Append("s/\"package_id\":\"").Append(src).Append("\"/\"package_id\":\"").Append(targetSku).Append("\"/g; ");
             }
+            if (targetSku == "subscription_pro_1_yearly")
+                sed.Append("s/\"cta_text\":\"Continue with 3-day free trial\"/\"cta_text\":\"Continue with 7-day free trial\"/g; ");
+            else
+                sed.Append("s/\"cta_text\":\"Continue with 7-day free trial\"/\"cta_text\":\"Continue with 3-day free trial\"/g; ");
             if (isProTab)
                 sed.Append("s/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g; ");
             return "sed -i '" + sed.ToString().TrimEnd() + "' /data/data/com.picsart.studio/files/settings.json 2>/dev/null; ";
