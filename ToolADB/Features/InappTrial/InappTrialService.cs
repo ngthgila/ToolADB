@@ -11,8 +11,6 @@ namespace ToolAdb.Features.InappTrial
         CrunchyrollNoTrial,
         Canva50Off3Months,
         Canva50OffMonthly,
-        CamScanner80Try,
-        CamScanner99Try,
         CamScanner149Try,
         BlinkistPro90Off,
         InShotYearly50Off
@@ -39,9 +37,7 @@ namespace ToolAdb.Features.InappTrial
                 InappTrialAction.CrunchyrollNoTrial => PatchCrunchyrollNoTrial(serial),
                 InappTrialAction.Canva50Off3Months => PatchCanva50Off(serial, monthlyInstallments: false),
                 InappTrialAction.Canva50OffMonthly => PatchCanva50Off(serial, monthlyInstallments: true),
-                InappTrialAction.CamScanner80Try => PatchCamScannerOffer(serial, CamScannerNewYearlySku, "cs-developer-40percent-p1y", "TRY 80.00/năm", priceListStyle: 124),
-                InappTrialAction.CamScanner99Try => PatchCamScannerOffer(serial, CamScannerNewYearlySku, "cs-developer-60percent-p1y", "TRY 99.00/năm", priceListStyle: 124),
-                InappTrialAction.CamScanner149Try => PatchCamScannerOffer(serial, CamScannerGuide2YearlySku, "firstyeardiscount", "TRY 149.00/năm", priceListStyle: 113),
+                InappTrialAction.CamScanner149Try => PatchCamScanner149Try(serial),
                 InappTrialAction.BlinkistPro90Off => PatchBlinkistPro90Off(serial),
                 InappTrialAction.InShotYearly50Off => PatchInShotYearly50Off(serial),
                 _ => throw new ArgumentOutOfRangeException(nameof(action))

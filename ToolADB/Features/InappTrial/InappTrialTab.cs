@@ -59,12 +59,6 @@ namespace ToolAdb.Features.InappTrial
             AddAction("50% Biz (3T)", InappTrialAction.Canva50OffMonthly, Teal, "canva.png",
                 "Canva Business: Giảm 50% (Thu từng tháng x3)",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Business giảm 50% (thu từng tháng x3).");
-            AddAction("Năm 80 TRY", InappTrialAction.CamScanner80Try, Teal, "camscanner.png",
-                "CamScanner: Gói năm 80 TRY (bỏ trial - trả tiền luôn)",
-                "Thao tác sẽ ghim offer 'cs-developer-40percent-p1y' (TRY 80.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
-            AddAction("Năm 99 TRY", InappTrialAction.CamScanner99Try, Blue, "camscanner.png",
-                "CamScanner: Gói năm 99 TRY (bỏ trial - trả tiền luôn)",
-                "Thao tác sẽ ghim offer 'cs-developer-60percent-p1y' (TRY 99.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
             AddAction("Năm 149 TRY", InappTrialAction.CamScanner149Try, Slate, "camscanner.png",
                 "CamScanner: Gói năm 149 TRY (bỏ trial - trả tiền luôn)",
                 "Thao tác sẽ ghim offer 'firstyeardiscount' (TRY 149.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");
