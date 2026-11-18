@@ -491,13 +491,18 @@ namespace ToolAdb
                 SplitterWidth = 5,
                 BackColor = Color.FromArgb(241, 245, 249)
             };
-            splitMain.HandleCreated += (s, e) => {
-                if (splitMain.Width > 0)
-                {
-                    int rightWidth = Math.Clamp((int)(splitMain.Width * 0.25), 195, 230);
-                    splitMain.SplitterDistance = Math.Max(220, splitMain.Width - splitMain.SplitterWidth - rightWidth);
-                }
-            };
+            bool splitMainSized = false;
+            void ApplyCompact2FaWidth()
+            {
+                if (splitMainSized || splitMain.Width < 420) return;
+                int rightWidth = Math.Clamp((int)(splitMain.Width * 0.25), 195, 230);
+                int maxLeft = splitMain.Width - splitMain.SplitterWidth - splitMain.Panel2MinSize;
+                int desiredLeft = Math.Clamp(splitMain.Width - splitMain.SplitterWidth - rightWidth, splitMain.Panel1MinSize, maxLeft);
+                splitMain.SplitterDistance = desiredLeft;
+                splitMainSized = true;
+            }
+            splitMain.HandleCreated += (s, e) => ApplyCompact2FaWidth();
+            splitMain.SizeChanged += (s, e) => ApplyCompact2FaWidth();
 
             var pnlLeftContainer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0) };
             var splitLeft = new SplitContainer
