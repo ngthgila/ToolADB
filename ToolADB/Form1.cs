@@ -487,7 +487,6 @@ namespace ToolAdb
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
                 FixedPanel = FixedPanel.Panel2,
-                Panel2MinSize = 185,
                 SplitterWidth = 5,
                 BackColor = Color.FromArgb(241, 245, 249)
             };
@@ -496,10 +495,17 @@ namespace ToolAdb
             {
                 if (splitMainSized || splitMain.Width < 420) return;
                 int rightWidth = Math.Clamp((int)(splitMain.Width * 0.25), 195, 230);
-                int maxLeft = splitMain.Width - splitMain.SplitterWidth - splitMain.Panel2MinSize;
+                int maxLeft = splitMain.Width - splitMain.SplitterWidth - 185;
                 int desiredLeft = Math.Clamp(splitMain.Width - splitMain.SplitterWidth - rightWidth, splitMain.Panel1MinSize, maxLeft);
-                splitMain.SplitterDistance = desiredLeft;
-                splitMainSized = true;
+                try
+                {
+                    splitMain.SplitterDistance = desiredLeft;
+                    splitMain.Panel2MinSize = 185;
+                    splitMainSized = true;
+                }
+                catch
+                {
+                }
             }
             splitMain.HandleCreated += (s, e) => ApplyCompact2FaWidth();
             splitMain.SizeChanged += (s, e) => ApplyCompact2FaWidth();
