@@ -866,17 +866,6 @@ namespace ToolAdb
             var tab = new TabPage { Text = vault.Name, BackColor = vault.SurfaceColor };
             vault.Grid = CreateEditableAccountGrid(vault);
 
-            var lblVaultBanner = new Label
-            {
-                Text = $"  KHO MAIL: {vault.Name.ToUpperInvariant()}",
-                Dock = DockStyle.Top,
-                Height = 22,
-                BackColor = vault.AccentColor,
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-
             var pnlStoreAction = new FlowLayoutPanel
             {
                 Dock = DockStyle.Bottom,
@@ -1015,7 +1004,6 @@ namespace ToolAdb
             pnlStoreAction.Controls.Add(btnClearInput);
 
             tab.Controls.Add(vault.Grid);
-            tab.Controls.Add(lblVaultBanner);
             tab.Controls.Add(pnlStoreAction);
             return tab;
         }
