@@ -57,13 +57,19 @@ namespace ToolAdb
         // Account Manager Storage
         private sealed class MailVault
         {
-            public MailVault(string name, string filePath)
+            public MailVault(string name, string filePath, Color accentColor, Color accentSoftColor, Color surfaceColor)
             {
                 Name = name;
                 FilePath = filePath;
+                AccentColor = accentColor;
+                AccentSoftColor = accentSoftColor;
+                SurfaceColor = surfaceColor;
             }
             public string Name { get; }
             public string FilePath { get; }
+            public Color AccentColor { get; }
+            public Color AccentSoftColor { get; }
+            public Color SurfaceColor { get; }
             public object SaveLock { get; } = new object();
             public Guna2DataGridView Grid { get; set; } = null!;
             public Label CountLabel { get; set; } = null!;
@@ -525,11 +531,45 @@ namespace ToolAdb
             {
                 Dock = DockStyle.Fill,
                 ItemSize = new Size(85, 30),
-                Alignment = TabAlignment.Bottom
+                Alignment = TabAlignment.Bottom,
+                TabButtonIdleState = { FillColor = Color.FromArgb(241, 245, 249), ForeColor = Color.FromArgb(71, 85, 105), Font = new Font("Segoe UI Semibold", 9f) },
+                TabButtonSelectedState = { Font = new Font("Segoe UI", 9.5f, FontStyle.Bold) }
             };
 
-            _vaultNew = new MailVault("New", AccountFile);
-            _vaultSale = new MailVault("Sale", SaleAccountFile);
+            _vaultNew = new MailVault(
+                "New",
+                AccountFile,
+                Color.FromArgb(37, 99, 235),
+                Color.FromArgb(219, 234, 254),
+                Color.FromArgb(239, 246, 255));
+            _vaultSale = new MailVault(
+                "Sale",
+                SaleAccountFile,
+                Color.FromArgb(217, 119, 6),
+                Color.FromArgb(254, 243, 199),
+                Color.FromArgb(255, 251, 235));
+
+            void ApplySelectedStorageTabStyle()
+            {
+                if (_tabStorage.SelectedIndex == 0)
+                {
+                    _tabStorage.TabButtonSelectedState.FillColor = _vaultNew.AccentSoftColor;
+                    _tabStorage.TabButtonSelectedState.ForeColor = _vaultNew.AccentColor;
+                    _tabStorage.TabButtonSelectedState.InnerColor = _vaultNew.AccentColor;
+                }
+                else if (_tabStorage.SelectedIndex == 1)
+                {
+                    _tabStorage.TabButtonSelectedState.FillColor = _vaultSale.AccentSoftColor;
+                    _tabStorage.TabButtonSelectedState.ForeColor = _vaultSale.AccentColor;
+                    _tabStorage.TabButtonSelectedState.InnerColor = _vaultSale.AccentColor;
+                }
+                else
+                {
+                    _tabStorage.TabButtonSelectedState.FillColor = Color.FromArgb(226, 232, 240);
+                    _tabStorage.TabButtonSelectedState.ForeColor = Color.FromArgb(51, 65, 85);
+                    _tabStorage.TabButtonSelectedState.InnerColor = Color.FromArgb(100, 116, 139);
+                }
+            }
 
             var tabNewAcc = CreateMailVaultTab(_vaultNew);
             var tabSaleAcc = CreateMailVaultTab(_vaultSale);
@@ -541,6 +581,8 @@ namespace ToolAdb
             _tabStorage.TabPages.Add(tabNewAcc);
             _tabStorage.TabPages.Add(tabSaleAcc);
             _tabStorage.TabPages.Add(tabUsedAcc);
+            _tabStorage.SelectedIndexChanged += (s, e) => ApplySelectedStorageTabStyle();
+            ApplySelectedStorageTabStyle();
             pnlStorage.Controls.Add(_tabStorage);
 
             // =========================================================
@@ -821,8 +863,19 @@ namespace ToolAdb
 
         private TabPage CreateMailVaultTab(MailVault vault)
         {
-            var tab = new TabPage { Text = vault.Name, BackColor = Color.White };
+            var tab = new TabPage { Text = vault.Name, BackColor = vault.SurfaceColor };
             vault.Grid = CreateEditableAccountGrid(vault);
+
+            var lblVaultBanner = new Label
+            {
+                Text = $"  KHO MAIL: {vault.Name.ToUpperInvariant()}",
+                Dock = DockStyle.Top,
+                Height = 22,
+                BackColor = vault.AccentColor,
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
 
             var pnlStoreAction = new FlowLayoutPanel
             {
@@ -830,6 +883,7 @@ namespace ToolAdb
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 FlowDirection = FlowDirection.LeftToRight,
+                BackColor = vault.SurfaceColor,
                 Padding = new Padding(2),
                 WrapContents = false
             };
@@ -867,7 +921,7 @@ namespace ToolAdb
                 Text = "Còn: 0",
                 AutoSize = true,
                 Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-                ForeColor = Color.Red,
+                ForeColor = vault.AccentColor,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Padding = new Padding(4, 5, 4, 0),
                 Margin = new Padding(0)
@@ -885,9 +939,9 @@ namespace ToolAdb
                 Margin = new Padding(0, 0, 4, 0),
                 BorderRadius = 5,
                 FillColor = Color.White,
-                ForeColor = Color.FromArgb(14, 165, 233),
-                UpDownButtonFillColor = Color.FromArgb(240, 244, 248),
-                UpDownButtonForeColor = Color.FromArgb(14, 165, 233)
+                ForeColor = vault.AccentColor,
+                UpDownButtonFillColor = vault.AccentSoftColor,
+                UpDownButtonForeColor = vault.AccentColor
             };
 
             var btnPushToInput = new Guna2Button
@@ -895,7 +949,7 @@ namespace ToolAdb
                 Text = "↩",
                 Height = compactH,
                 Width = 38,
-                FillColor = Color.FromArgb(14, 165, 233),
+                FillColor = vault.AccentColor,
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 13f, FontStyle.Bold),
                 Margin = compactMargin,
@@ -961,6 +1015,7 @@ namespace ToolAdb
             pnlStoreAction.Controls.Add(btnClearInput);
 
             tab.Controls.Add(vault.Grid);
+            tab.Controls.Add(lblVaultBanner);
             tab.Controls.Add(pnlStoreAction);
             return tab;
         }
@@ -971,7 +1026,7 @@ namespace ToolAdb
             var g = new Guna2DataGridView
             {
                 Dock = DockStyle.Fill,
-                BackgroundColor = Color.White,
+                BackgroundColor = vault?.SurfaceColor ?? Color.White,
                 AllowUserToAddRows = false,
                 RowHeadersVisible = false,
                 ReadOnly = !isEditable,
@@ -982,6 +1037,17 @@ namespace ToolAdb
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect,
                 MultiSelect = true
             };
+
+            if (vault != null)
+            {
+                g.EnableHeadersVisualStyles = false;
+                g.ThemeStyle.HeaderStyle.BackColor = vault.AccentColor;
+                g.ThemeStyle.HeaderStyle.ForeColor = Color.White;
+                g.ThemeStyle.RowsStyle.BackColor = Color.White;
+                g.ThemeStyle.AlternatingRowsStyle.BackColor = vault.SurfaceColor;
+                g.ThemeStyle.RowsStyle.SelectionBackColor = vault.AccentSoftColor;
+                g.ThemeStyle.RowsStyle.SelectionForeColor = Color.FromArgb(30, 41, 59);
+            }
 
             var colEmail = new DataGridViewTextBoxColumn { HeaderText = "Email", Name = "email", SortMode = DataGridViewColumnSortMode.NotSortable };
             var colPass = new DataGridViewTextBoxColumn { HeaderText = "Pass", Name = "pass", SortMode = DataGridViewColumnSortMode.NotSortable };
