@@ -32,10 +32,10 @@ namespace ToolAdb
                 : Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
         private string ApkDir => Path.Combine(AppContext.BaseDirectory, "APK");
         private string AccountFile => Path.Combine(BaseDir, "accounts.txt");
+        private string SaleAccountFile => Path.Combine(BaseDir, "accounts_sale.txt");
         private string UsedAccountFile => Path.Combine(BaseDir, "used_accounts.txt");
         private string IniFile => Path.Combine(BaseDir, "config", "userdata.ini");
         private readonly AdbClient _adb;
-        private object _saveLock = new object();
         private System.Windows.Forms.Timer _inputScanTimer = null!;
         private Panel pnlContent;
         private Guna2TabControl tabControl;
@@ -55,10 +55,23 @@ namespace ToolAdb
         private System.Windows.Forms.Timer _totpTimer = null!;
         private bool _isTransferring = false;
         // Account Manager Storage
-        private Guna2DataGridView _gridStorage = null!;
+        private sealed class MailVault
+        {
+            public MailVault(string name, string filePath)
+            {
+                Name = name;
+                FilePath = filePath;
+            }
+            public string Name { get; }
+            public string FilePath { get; }
+            public object SaveLock { get; } = new object();
+            public Guna2DataGridView Grid { get; set; } = null!;
+            public Label CountLabel { get; set; } = null!;
+        }
+        private MailVault _vaultNew = null!;
+        private MailVault _vaultSale = null!;
         private Guna2DataGridView _gridUsed = null!;
         private Guna2TabControl _tabStorage = null!;
-        private Label _lblStorageCount = null!;
         // Thay CheckedListBox bằng Grid cho đẹp
         private Guna2DataGridView _gridDevices;
         private RichTextBox _txtMagiskLog = null!;
@@ -473,11 +486,17 @@ namespace ToolAdb
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
+                FixedPanel = FixedPanel.Panel2,
+                Panel2MinSize = 185,
                 SplitterWidth = 5,
                 BackColor = Color.FromArgb(241, 245, 249)
             };
             splitMain.HandleCreated += (s, e) => {
-                if (splitMain.Width > 0) splitMain.SplitterDistance = (int)(splitMain.Width * 0.6);
+                if (splitMain.Width > 0)
+                {
+                    int rightWidth = Math.Clamp((int)(splitMain.Width * 0.25), 195, 230);
+                    splitMain.SplitterDistance = Math.Max(220, splitMain.Width - splitMain.SplitterWidth - rightWidth);
+                }
             };
 
             var pnlLeftContainer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0) };
@@ -489,184 +508,27 @@ namespace ToolAdb
                 BackColor = Color.FromArgb(229, 231, 235)
             };
 
-            // 1. STORAGE
+            // 1. STORAGE (2 kho: New + Sale, tab Đã dùng chung)
             var pnlStorage = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, Padding = new Padding(5) };
             _tabStorage = new Guna2TabControl
             {
                 Dock = DockStyle.Fill,
-                ItemSize = new Size(100, 30),
-                // ▼▼▼ YÊU CẦU 1: CHUYỂN TAB XUỐNG DƯỚI CÙNG ▼▼▼
+                ItemSize = new Size(85, 30),
                 Alignment = TabAlignment.Bottom
             };
 
-            var tabNewAcc = new TabPage { Text = "Kho", BackColor = Color.White };
-            _gridStorage = CreateEditableAccountGrid(true);
+            _vaultNew = new MailVault("New", AccountFile);
+            _vaultSale = new MailVault("Sale", SaleAccountFile);
 
-            // --- ACTION BAR (PHIÊN BẢN COMPACT & ĐÃ FIX LỖI) ---
-            var pnlStoreAction = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(2), // Padding nhỏ để các nút không dính sát viền
-                WrapContents = false      // QUAN TRỌNG: Chống xuống dòng lung tung
-            };
-
-            // --- CẤU HÌNH STYLE NHỎ GỌN ---
-            int compactH = 28; // Chiều cao giữ nguyên hoặc giảm xuống 26 nếu muốn bé hơn nữa
-            var iconFont = new Font("Segoe UI", 11.5f, FontStyle.Bold); // Font icon vừa vặn
-            var compactMargin = new Padding(1); // Khoảng cách giữa các nút siêu nhỏ (1px)
-
-            // 1. Nút Nạp (Refresh) - Thu nhỏ tối đa
-            var btnLoadAcc = new Guna2Button
-            {
-                Text = "🔄",
-                Height = compactH,
-                Width = 38, // Giảm từ 50 -> 38 (vừa khít icon)
-                FillColor = Color.DimGray,
-                Font = iconFont,
-                Margin = compactMargin,
-                TextOffset = new Point(0, -1) // Căn chỉnh icon cho giữa
-            };
-            btnLoadAcc.Click += (s, e) => LoadAccountsToGrid();
-
-            // 2. Nút Paste (Thêm) - Thu nhỏ
-            var btnImportClipboard = new Guna2Button
-            {
-                Text = "➕",
-                Height = compactH,
-                Width = 38, // Giảm từ 60 -> 38
-                FillColor = Color.SeaGreen,
-                Font = iconFont,
-                Margin = compactMargin,
-                TextOffset = new Point(0, -1)
-            };
-            btnImportClipboard.Click += (s, e) => ActionPasteImportToStorage();
-
-            // 3. Label đếm - TO, RÕ RÀNG, DỄ NHÌN
-            _lblStorageCount = new Label
-            {
-                Text = "0",
-                AutoSize = true,
-                // Tăng font lên 10.5 hoặc 11, dùng màu Xanh Đậm hoặc Đỏ Đậm để nổi bật trên nền trắng
-                Font = new Font("Segoe UI", 10.5f, FontStyle.Bold),
-                ForeColor = Color.Red, // Màu xanh cổ vịt đậm (hoặc dùng Color.Red nếu thích)
-                TextAlign = ContentAlignment.MiddleCenter,
-                // Chỉnh Padding Top = 5 để căn giữa theo chiều dọc với các nút
-                Padding = new Padding(5, 5, 5, 0),
-                Margin = new Padding(0)
-            };
-
-            // --- TẠO Ô CHỌN SỐ LƯỢNG (MỚI) ---
-            var numTakeCount = new Guna2NumericUpDown
-            {
-                Value = 1,          // Mặc định lấy 1
-                Minimum = 1,        // Tối thiểu 1
-                Maximum = 1000,     // Tối đa 1000
-                DecimalPlaces = 0,  // Chỉ nhập số nguyên
-                Width = 70,         // Chiều rộng vừa phải
-                Height = compactH,  // Chiều cao bằng các nút khác
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
-                Margin = new Padding(0, 0, 5, 0), // Cách lề phải một chút
-                BorderRadius = 5,
-                FillColor = Color.White,
-                ForeColor = Color.FromArgb(14, 165, 233), // Màu chữ xanh
-                UpDownButtonFillColor = Color.FromArgb(240, 244, 248), // Màu nền nút lên xuống
-                UpDownButtonForeColor = Color.FromArgb(14, 165, 233)   // Màu mũi tên
-            };
-
-            // --- NÚT SEND (SỬA LẠI SỰ KIỆN CLICK) ---
-            var btnPushToInput = new Guna2Button
-            {
-                Text = "↩",
-                Height = compactH,
-                Width = 45,
-                FillColor = Color.FromArgb(14, 165, 233),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                Margin = compactMargin,
-                BorderRadius = 5,
-                Cursor = Cursors.Hand
-            };
-
-            // SỰ KIỆN QUAN TRỌNG: Lấy giá trị từ ô numTakeCount truyền vào hàm
-            btnPushToInput.Click += (s, e) => {
-                // Lấy giá trị số lượng người dùng đang chọn
-                int countToTake = (int)numTakeCount.Value;
-
-                // Gọi hàm lấy hàng loạt (đã sửa ở bước trước)
-                TransferAccountsToInput(countToTake);
-            };
-
-            // --- NÚT SYNC SETTING ---
-            var btnSyncSetting = new Guna2Button
-            {
-                Text = "⚙",
-                Height = compactH,
-                Width = 45,
-                FillColor = Color.FromArgb(71, 85, 105), // Mau xam dam
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                Margin = new Padding(5, 0, 0, 0),
-                BorderRadius = 5,
-                Cursor = Cursors.Hand
-            };
-            btnSyncSetting.Click += async (s, e) => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS");
-
-            // --- NÚT XÓA INPUT ---
-            var btnClearInput = new Guna2Button
-            {
-                Text = "🗑",
-                Height = compactH,
-                Width = 45,
-                FillColor = Color.FromArgb(239, 68, 68),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
-                Margin = new Padding(5, 0, 0, 0),
-                BorderRadius = 5,
-                Cursor = Cursors.Hand
-            };
-
-            // ▼▼▼ THÊM ĐOẠN NÀY ĐỂ TẠO TOOLTIP ▼▼▼
-            var tt = new System.Windows.Forms.ToolTip();
-            tt.SetToolTip(btnClearInput, "Xóa trắng ô Input và 2FA");
-            tt.SetToolTip(btnSyncSetting, "Mở Sync Settings");
-            // ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-
-            // Sự kiện Click (Giữ nguyên)
-            btnClearInput.Click += (s, e) => {
-                if (_txtAccountInput.TextLength == 0 && _txtSecretInput.TextLength == 0) return;
-
-                var ask = MessageBox.Show("Bạn muốn xóa trắng toàn bộ dữ liệu đang nhập (Account & 2FA)?",
-                                          "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-                if (ask == DialogResult.Yes)
-                {
-                    _txtAccountInput.Clear();
-                    _txtSecretInput.Clear();
-                    if (_grid2Fa != null) _grid2Fa.Rows.Clear();
-                    SetStatus("Đã dọn dẹp Input.");
-                }
-            };
-            // Thêm vào Panel (Thứ tự: Nạp -> Paste -> Label -> Số lượng -> Send -> Xóa)
-            pnlStoreAction.Controls.Add(btnLoadAcc);
-            pnlStoreAction.Controls.Add(btnImportClipboard);
-            pnlStoreAction.Controls.Add(_lblStorageCount);
-            pnlStoreAction.Controls.Add(numTakeCount);   // Ô nhập số
-            pnlStoreAction.Controls.Add(btnPushToInput); // Nút Send
-            pnlStoreAction.Controls.Add(btnSyncSetting); // Nút Sync Settings
-            pnlStoreAction.Controls.Add(btnClearInput);  // Nút Thùng rác (🗑)
-
-            // Add Panel vào Tab
-            tabNewAcc.Controls.Add(_gridStorage);
-            tabNewAcc.Controls.Add(pnlStoreAction);
+            var tabNewAcc = CreateMailVaultTab(_vaultNew);
+            var tabSaleAcc = CreateMailVaultTab(_vaultSale);
 
             var tabUsedAcc = new TabPage { Text = "Đã dùng", BackColor = Color.WhiteSmoke };
-            _gridUsed = CreateEditableAccountGrid(false);
+            _gridUsed = CreateEditableAccountGrid(null);
             tabUsedAcc.Controls.Add(_gridUsed);
 
             _tabStorage.TabPages.Add(tabNewAcc);
+            _tabStorage.TabPages.Add(tabSaleAcc);
             _tabStorage.TabPages.Add(tabUsedAcc);
             pnlStorage.Controls.Add(_tabStorage);
 
@@ -772,7 +634,7 @@ namespace ToolAdb
             var pnlRight = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(5), // Padding nhỏ gọn 5px
+                Padding = new Padding(3),
                 BackColor = Color.White
             };
 
@@ -782,13 +644,13 @@ namespace ToolAdb
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 Dock = DockStyle.Top,
-                Height = 80, // Giảm chiều cao chút cho gọn
-                Font = new Font("Consolas", 9f),
-                PlaceholderText = "Nhập danh sách Secret Key (Mỗi dòng 1 key)..."
+                Height = 76,
+                Font = new Font("Consolas", 8.5f),
+                PlaceholderText = "Secret Key (1 dòng/key)..."
             };
             _txtSecretInput.TextChanged += (s, e) => ParseSecretsToGrid();
 
-            // 3. Khởi tạo Bảng 2FA (Đã sửa lỗi hiển thị cột)
+            // 3. Khởi tạo Bảng 2FA (Thu gọn vừa khung hẹp)
             _grid2Fa = new Guna2DataGridView();
             _grid2Fa.Dock = DockStyle.Fill;
             _grid2Fa.BackgroundColor = Color.White;
@@ -796,53 +658,46 @@ namespace ToolAdb
             _grid2Fa.RowHeadersVisible = false;
             _grid2Fa.ReadOnly = true;
             _grid2Fa.Theme = Guna.UI2.WinForms.Enums.DataGridViewPresetThemes.Default;
-            _grid2Fa.ColumnHeadersHeight = 35;
-            _grid2Fa.RowTemplate.Height = 30;
+            _grid2Fa.ColumnHeadersHeight = 32;
+            _grid2Fa.RowTemplate.Height = 28;
 
-            // QUAN TRỌNG: Tắt tự động giãn cột để chỉnh tay
             _grid2Fa.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
 
-            // --- 1. Cột Số thứ tự (#) - SIÊU NHỎ (25px) ---
             var colIdx = new DataGridViewTextBoxColumn
             {
                 HeaderText = "#",
                 Name = "idx",
-                Width = 13, // <--- Cực nhỏ, chỉ vừa đủ hiện số
+                Width = 18,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
-            // Căn giữa số thứ tự và tiêu đề để nhìn cân đối trong không gian hẹp
             colIdx.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             colIdx.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
 
-            // --- 2. Cột Mã 2FA (CODE) - CHIẾM TOÀN BỘ KHÔNG GIAN CÒN LẠI ---
             var colCode = new DataGridViewTextBoxColumn
             {
                 HeaderText = "CODE",
                 Name = "code",
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill // <--- Quan trọng: Tự động phình to ra
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
             };
-            colCode.DefaultCellStyle.Font = new Font("Segoe UI", 10f, FontStyle.Bold);
+            colCode.DefaultCellStyle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
             colCode.DefaultCellStyle.ForeColor = Color.Teal;
-            // Căn lề trái + Padding một chút để mã không dính sát vào cột số thứ tự
-            colCode.DefaultCellStyle.Padding = new Padding(5, 0, 0, 0);
+            colCode.DefaultCellStyle.Padding = new Padding(3, 0, 0, 0);
 
-            // --- 3. Cột Nút Copy - Cố định (Vừa đủ chữ Copy) ---
             var colBtnCopy = new DataGridViewButtonColumn
             {
                 Text = "Copy",
                 UseColumnTextForButtonValue = true,
                 HeaderText = "",
-                Width = 50, // 50px là đủ cho chữ Copy
+                Width = 42,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
 
-            // --- 4. Cột Nút Gửi - Cố định (Vừa đủ chữ Gửi) ---
             var colBtnSend = new DataGridViewButtonColumn
             {
                 Text = "Gửi >",
                 UseColumnTextForButtonValue = true,
                 HeaderText = "",
-                Width = 50,
+                Width = 44,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
 
@@ -868,10 +723,10 @@ namespace ToolAdb
 
             var btnCopyAll2Fa = new Guna2Button
             {
-                Text = "Copy 2FA All",
+                Text = "Copy All",
                 Dock = DockStyle.Fill,
                 FillColor = Color.Teal,
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
                 Margin = new Padding(0, 0, 2, 0)
             };
             btnCopyAll2Fa.Click += (s, e) => {
@@ -907,10 +762,10 @@ namespace ToolAdb
 
             var btnSendAll2Fa = new Guna2Button
             {
-                Text = "Gửi 2FA All",
+                Text = "Gửi All",
                 Dock = DockStyle.Fill,
                 FillColor = Color.FromArgb(124, 58, 237),
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
                 Margin = new Padding(2, 0, 0, 0)
             };
             btnSendAll2Fa.Click += async (s, e) => await ActionSend2FaToAll();
@@ -948,12 +803,160 @@ namespace ToolAdb
             page.Controls.Add(splitMain);
 
             // Load dữ liệu
-            LoadAccountsToGrid();
+            LoadAccountsToGrid(_vaultNew);
+            LoadAccountsToGrid(_vaultSale);
             LoadUsedAccountsToGrid();
         }
 
-        private Guna2DataGridView CreateEditableAccountGrid(bool isEditable)
+        private TabPage CreateMailVaultTab(MailVault vault)
         {
+            var tab = new TabPage { Text = vault.Name, BackColor = Color.White };
+            vault.Grid = CreateEditableAccountGrid(vault);
+
+            var pnlStoreAction = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(2),
+                WrapContents = false
+            };
+
+            const int compactH = 28;
+            var iconFont = new Font("Segoe UI", 11.5f, FontStyle.Bold);
+            var compactMargin = new Padding(1);
+
+            var btnLoadAcc = new Guna2Button
+            {
+                Text = "🔄",
+                Height = compactH,
+                Width = 34,
+                FillColor = Color.DimGray,
+                Font = iconFont,
+                Margin = compactMargin,
+                TextOffset = new Point(0, -1)
+            };
+            btnLoadAcc.Click += (s, e) => LoadAccountsToGrid(vault);
+
+            var btnImportClipboard = new Guna2Button
+            {
+                Text = "➕",
+                Height = compactH,
+                Width = 34,
+                FillColor = Color.SeaGreen,
+                Font = iconFont,
+                Margin = compactMargin,
+                TextOffset = new Point(0, -1)
+            };
+            btnImportClipboard.Click += (s, e) => ActionPasteImportToStorage(vault);
+
+            vault.CountLabel = new Label
+            {
+                Text = "Còn: 0",
+                AutoSize = true,
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                ForeColor = Color.Red,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Padding = new Padding(4, 5, 4, 0),
+                Margin = new Padding(0)
+            };
+
+            var numTakeCount = new Guna2NumericUpDown
+            {
+                Value = 1,
+                Minimum = 1,
+                Maximum = 1000,
+                DecimalPlaces = 0,
+                Width = 58,
+                Height = compactH,
+                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 4, 0),
+                BorderRadius = 5,
+                FillColor = Color.White,
+                ForeColor = Color.FromArgb(14, 165, 233),
+                UpDownButtonFillColor = Color.FromArgb(240, 244, 248),
+                UpDownButtonForeColor = Color.FromArgb(14, 165, 233)
+            };
+
+            var btnPushToInput = new Guna2Button
+            {
+                Text = "↩",
+                Height = compactH,
+                Width = 38,
+                FillColor = Color.FromArgb(14, 165, 233),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = compactMargin,
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
+            };
+            btnPushToInput.Click += (s, e) => TransferAccountsToInput(vault, (int)numTakeCount.Value);
+
+            var btnSyncSetting = new Guna2Button
+            {
+                Text = "⚙",
+                Height = compactH,
+                Width = 36,
+                FillColor = Color.FromArgb(71, 85, 105),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = new Padding(4, 0, 0, 0),
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
+            };
+            btnSyncSetting.Click += async (s, e) => await ActionRunAdbOnSelectedAsync("Open Sync", "shell am start -a android.settings.SYNC_SETTINGS");
+
+            var btnClearInput = new Guna2Button
+            {
+                Text = "🗑",
+                Height = compactH,
+                Width = 36,
+                FillColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+                Margin = new Padding(4, 0, 0, 0),
+                BorderRadius = 5,
+                Cursor = Cursors.Hand
+            };
+            btnClearInput.Click += (s, e) => {
+                if (_txtAccountInput.TextLength == 0 && _txtSecretInput.TextLength == 0) return;
+
+                var ask = MessageBox.Show("Bạn muốn xóa trắng toàn bộ dữ liệu đang nhập (Account & 2FA)?",
+                                          "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (ask == DialogResult.Yes)
+                {
+                    _txtAccountInput.Clear();
+                    _txtSecretInput.Clear();
+                    if (_grid2Fa != null) _grid2Fa.Rows.Clear();
+                    SetStatus("Đã dọn dẹp Input.");
+                }
+            };
+
+            var tt = new System.Windows.Forms.ToolTip();
+            tt.SetToolTip(btnLoadAcc, $"Nạp lại kho {vault.Name}");
+            tt.SetToolTip(btnImportClipboard, $"Paste thêm mail vào kho {vault.Name}");
+            tt.SetToolTip(btnPushToInput, $"Lấy từ kho {vault.Name} sang Input Area");
+            tt.SetToolTip(btnSyncSetting, "Mở Sync Settings");
+            tt.SetToolTip(btnClearInput, "Xóa trắng ô Input và 2FA");
+
+            pnlStoreAction.Controls.Add(btnLoadAcc);
+            pnlStoreAction.Controls.Add(btnImportClipboard);
+            pnlStoreAction.Controls.Add(vault.CountLabel);
+            pnlStoreAction.Controls.Add(numTakeCount);
+            pnlStoreAction.Controls.Add(btnPushToInput);
+            pnlStoreAction.Controls.Add(btnSyncSetting);
+            pnlStoreAction.Controls.Add(btnClearInput);
+
+            tab.Controls.Add(vault.Grid);
+            tab.Controls.Add(pnlStoreAction);
+            return tab;
+        }
+
+        private Guna2DataGridView CreateEditableAccountGrid(MailVault vault)
+        {
+            bool isEditable = vault != null;
             var g = new Guna2DataGridView
             {
                 Dock = DockStyle.Fill,
@@ -983,7 +986,6 @@ namespace ToolAdb
             g.CellContentClick += (s, e) => {
                 if (e.RowIndex < 0) return;
 
-                // ▼▼▼ YÊU CẦU 3: SỬA LỖI TÔ MÀU (THÊM SELECTION BACKCOLOR) ▼▼▼
                 if (e.ColumnIndex == 2)
                 {
                     if (!TrySetClipboardText(g.Rows[e.RowIndex].Cells[0].Value?.ToString() ?? ""))
@@ -993,7 +995,7 @@ namespace ToolAdb
                     }
                     var cell = g.Rows[e.RowIndex].Cells[0];
                     cell.Style.BackColor = Color.FromArgb(220, 252, 231);
-                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
+                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231);
                     SetStatus("Copied Email");
                 }
                 else if (e.ColumnIndex == 3)
@@ -1005,17 +1007,17 @@ namespace ToolAdb
                     }
                     var cell = g.Rows[e.RowIndex].Cells[1];
                     cell.Style.BackColor = Color.FromArgb(220, 252, 231);
-                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231); // Đổi cả màu khi đang chọn
+                    cell.Style.SelectionBackColor = Color.FromArgb(220, 252, 231);
                     SetStatus("Copied Pass");
                 }
-                else if (isEditable && e.ColumnIndex == 4) MoveSingleRowToUsed(e.RowIndex);
+                else if (vault != null && e.ColumnIndex == 4) MoveSingleRowToUsed(vault, e.RowIndex);
             };
 
-            if (isEditable) g.CellEndEdit += (s, e) => SaveStorageFile();
+            if (vault != null) g.CellEndEdit += (s, e) => SaveStorageFile(vault);
             return g;
         }
 
-        private void ActionPasteImportToStorage()
+        private void ActionPasteImportToStorage(MailVault vault)
         {
             string clip = "";
             try { clip = Clipboard.GetText(); } catch { }
@@ -1029,65 +1031,58 @@ namespace ToolAdb
                 var p = ParseLine(line);
                 if (!string.IsNullOrEmpty(p.email))
                 {
-                    _gridStorage.Rows.Add(p.email, p.pass);
+                    vault.Grid.Rows.Add(p.email, p.pass);
                     added++;
                 }
             }
 
             if (added > 0)
             {
-                SaveStorageFile();
-                UpdateStorageCount();
-                MessageBox.Show($"Đã thêm {added} tài khoản vào kho!");
+                SaveStorageFile(vault);
+                UpdateStorageCount(vault);
+                MessageBox.Show($"Đã thêm {added} tài khoản vào kho {vault.Name}!");
             }
         }
 
-        private void MoveSingleRowToUsed(int rowIndex)
+        private void MoveSingleRowToUsed(MailVault vault, int rowIndex)
         {
             try
             {
-                // 1. Lấy dữ liệu
-                var row = _gridStorage.Rows[rowIndex];
+                var row = vault.Grid.Rows[rowIndex];
                 string e = row.Cells[0].Value?.ToString() ?? "";
                 string p = row.Cells[1].Value?.ToString() ?? "";
 
-                // 2. Thêm vào bảng "Đã dùng" (Thao tác RAM, nhanh)
-                _gridUsed.Rows.Add(e, p, "Cp User", "Cp Pass");
+                _gridUsed.Rows.Add(e, p);
 
-                // 3. Ghi nối vào file Used (Thao tác Append, rất nhanh)
                 try
                 {
                     File.AppendAllText(UsedAccountFile, $"{e}|{p}{Environment.NewLine}");
                 }
                 catch { }
 
-                // 4. Xóa dòng khỏi Grid (Thao tác UI)
-                _gridStorage.Rows.RemoveAt(rowIndex);
+                vault.Grid.Rows.RemoveAt(rowIndex);
+                UpdateStorageCount(vault);
+                SaveStorageFileAsync(vault);
 
-                // 5. Cập nhật số lượng
-                UpdateStorageCount();
-
-                // 6. QUAN TRỌNG: Lưu file chạy ngầm (Không bao giờ lag nữa)
-                // Thay thế SaveStorageFile() bằng SaveStorageFileAsync()
-                SaveStorageFileAsync();
-
-                SetStatus("Đã chuyển 1 dòng sang Đã dùng.");
+                SetStatus($"Đã chuyển 1 dòng từ {vault.Name} sang Đã dùng.");
             }
             catch { }
         }
 
-        private void LoadAccountsToGrid()
+        private void LoadAccountsToGrid(MailVault vault)
         {
-            _gridStorage.Rows.Clear();
-            if (!File.Exists(AccountFile)) return;
-            var lines = File.ReadAllLines(AccountFile);
-            foreach (var line in lines)
+            vault.Grid.Rows.Clear();
+            if (File.Exists(vault.FilePath))
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var p = ParseLine(line);
-                if (!string.IsNullOrEmpty(p.email)) _gridStorage.Rows.Add(p.email, p.pass);
+                var lines = File.ReadAllLines(vault.FilePath);
+                foreach (var line in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    var p = ParseLine(line);
+                    if (!string.IsNullOrEmpty(p.email)) vault.Grid.Rows.Add(p.email, p.pass);
+                }
             }
-            UpdateStorageCount();
+            UpdateStorageCount(vault);
         }
 
         private void LoadUsedAccountsToGrid()
@@ -1103,54 +1098,57 @@ namespace ToolAdb
             }
         }
 
-        private void SaveStorageFile()
+        private static List<string> CollectVaultLines(MailVault vault)
         {
             var lines = new List<string>();
-            foreach (DataGridViewRow row in _gridStorage.Rows)
+            foreach (DataGridViewRow row in vault.Grid.Rows)
             {
                 string e = row.Cells[0].Value?.ToString() ?? "";
                 string p = row.Cells[1].Value?.ToString() ?? "";
                 if (!string.IsNullOrWhiteSpace(e)) lines.Add($"{e}|{p}");
             }
-            try { File.WriteAllText(AccountFile, string.Join(Environment.NewLine, lines)); } catch { }
+            return lines;
         }
 
-        // --- CẬP NHẬT BỘ ĐẾM VÀ TITLE ---
-        private void UpdateStorageCount()
+        private static void SaveStorageFile(MailVault vault)
         {
-            int count = _gridStorage.Rows.Count;
-            if (_lblStorageCount != null) _lblStorageCount.Text = $"Còn: {count}";
-            if (_tabStorage != null && _tabStorage.TabPages.Count > 0)
-                _tabStorage.TabPages[0].Text = $"Kho";
+            var lines = CollectVaultLines(vault);
+            lock (vault.SaveLock)
+            {
+                try { File.WriteAllText(vault.FilePath, string.Join(Environment.NewLine, lines)); } catch { }
+            }
         }
 
-        private void TransferAccountsToInput(int count = 1)
+        private static void UpdateStorageCount(MailVault vault)
         {
-            // 1. CHỐNG SPAM: Nếu đang xử lý thì không nhận lệnh mới
+            if (vault.CountLabel != null)
+                vault.CountLabel.Text = $"Còn: {vault.Grid.Rows.Count}";
+        }
+
+        private void TransferAccountsToInput(MailVault vault, int count = 1)
+        {
             if (_isTransferring) return;
             _isTransferring = true;
 
-            if (_gridStorage.Rows.Count == 0)
+            if (vault.Grid.Rows.Count == 0)
             {
-                SetStatus("Kho tài khoản trống!");
+                SetStatus($"Kho {vault.Name} trống!");
                 _isTransferring = false;
                 return;
             }
 
             try
             {
-                // Tạm dừng giao diện để xử lý mượt (đặc biệt khi lấy 20-50 dòng)
-                _gridStorage.SuspendLayout();
+                vault.Grid.SuspendLayout();
                 _txtAccountInput.SuspendLayout();
 
-                int actualToTake = Math.Min(count, _gridStorage.Rows.Count);
+                int actualToTake = Math.Min(count, vault.Grid.Rows.Count);
                 List<string> linesTaken = new List<string>();
                 List<DataGridViewRow> rowsToRemove = new List<DataGridViewRow>();
 
-                // BƯỚC 1: Duyệt và gom dữ liệu (Không xóa ngay để tránh lệch Index)
                 for (int i = 0; i < actualToTake; i++)
                 {
-                    var row = _gridStorage.Rows[i];
+                    var row = vault.Grid.Rows[i];
                     if (row.IsNewRow) continue;
 
                     string e = row.Cells[0].Value?.ToString()?.Trim() ?? "";
@@ -1159,11 +1157,10 @@ namespace ToolAdb
                     if (!string.IsNullOrEmpty(e))
                     {
                         linesTaken.Add($"{e}|{p}");
-                        rowsToRemove.Add(row); // Lưu lại dòng này để xóa sau
+                        rowsToRemove.Add(row);
                     }
                 }
 
-                // BƯỚC 2: Cập nhật vào ô Input
                 if (linesTaken.Count > 0)
                 {
                     string bulkText = string.Join(Environment.NewLine, linesTaken);
@@ -1172,28 +1169,21 @@ namespace ToolAdb
                     else
                         _txtAccountInput.AppendText(bulkText);
 
-                    // Cuộn xuống cuối
                     _txtAccountInput.SelectionStart = _txtAccountInput.TextLength;
                     _txtAccountInput.ScrollToCaret();
 
-                    // BƯỚC 3: Xóa khỏi kho Storage và thêm vào kho Đã dùng
                     foreach (var row in rowsToRemove)
                     {
-                        // Thêm vào tab "Đã dùng" trên giao diện
                         string email = row.Cells[0].Value?.ToString() ?? "";
                         string pass = row.Cells[1].Value?.ToString() ?? "";
                         _gridUsed.Rows.Add(email, pass);
-
-                        // Xóa chính xác dòng này khỏi kho (Cực kỳ an toàn)
-                        _gridStorage.Rows.Remove(row);
+                        vault.Grid.Rows.Remove(row);
                     }
 
-                    // Ghi file Used (Ghi nối đuôi - Append)
                     File.AppendAllLines(UsedAccountFile, linesTaken);
 
-                    // BƯỚC 4: Cập nhật con số hiển thị
-                    _lblStorageCount.Text = _gridStorage.Rows.Count.ToString();
-                    SetStatus($"Đã lấy {linesTaken.Count} tài khoản.");
+                    UpdateStorageCount(vault);
+                    SetStatus($"Đã lấy {linesTaken.Count} tài khoản từ kho {vault.Name}.");
                 }
             }
             catch (Exception ex)
@@ -1203,12 +1193,11 @@ namespace ToolAdb
             finally
             {
                 _txtAccountInput.ResumeLayout();
-                _gridStorage.ResumeLayout();
-                _isTransferring = false; // Mở khóa cho lần bấm sau
+                vault.Grid.ResumeLayout();
+                _isTransferring = false;
             }
 
-            // BƯỚC 5: Lưu lại file kho (Chạy ngầm để không lag)
-            SaveStorageFileAsync();
+            SaveStorageFileAsync(vault);
         }
 
         // ==========================================
@@ -2417,23 +2406,15 @@ setprop sys.powerctl reboot
         }
 
         #endregion
-        private void SaveStorageFileAsync()
+        private static void SaveStorageFileAsync(MailVault vault)
         {
-            // Copy dữ liệu ra list tạm (Thao tác trên RAM, cực nhanh)
-            var lines = new List<string>();
-            foreach (DataGridViewRow row in _gridStorage.Rows)
-            {
-                string e = row.Cells[0].Value?.ToString() ?? "";
-                string p = row.Cells[1].Value?.ToString() ?? "";
-                if (!string.IsNullOrWhiteSpace(e)) lines.Add($"{e}|{p}");
-            }
+            var lines = CollectVaultLines(vault);
 
-            // Đẩy việc ghi đĩa xuống luồng phụ (Background Thread)
             Task.Run(() =>
             {
-                lock (_saveLock) // Đảm bảo an toàn dữ liệu
+                lock (vault.SaveLock)
                 {
-                    try { File.WriteAllText(AccountFile, string.Join(Environment.NewLine, lines)); } catch { }
+                    try { File.WriteAllText(vault.FilePath, string.Join(Environment.NewLine, lines)); } catch { }
                 }
             });
         }
