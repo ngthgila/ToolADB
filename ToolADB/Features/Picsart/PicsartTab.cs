@@ -40,12 +40,12 @@ namespace ToolAdb.Features.Picsart
             var picsartIcon = TabUi.LoadAppIcon("picsart.png");
             AddAction("🔍 Kiểm tra", PicsartAction.Inspect, Slate, null, "Kiểm tra cấu hình");
             AddAction("💳 Mở bảng giá", PicsartAction.OpenPricing, Blue, null, "Mở bảng giá Picsart");
-            AddAction("Pro tháng (500Cr)", PicsartAction.ProMonthly, Violet, picsartIcon, "Pro tháng (500 credit)",
-                "Thao tác sẽ xóa token thuê bao cũ, đổi device id và ép cấu hình bảng giá sang gói Pro 1 tháng (500 credit).");
+            AddAction("Pro 64.99 (500Cr)", PicsartAction.ProMonthly, Violet, picsartIcon, "Pro tháng 64.99 TRY (500 credit)",
+                "Thao tác sẽ xóa token thuê bao cũ, đổi device id, loại bỏ gói 100 credit / 599.99 TRY và mở thẳng gói Pro 1 tháng 64.99 TRY (500 credit - subscription_pro_1_monthly).");
             AddAction("Ultra (1500Cr)", PicsartAction.UltraMonthly, Orange, picsartIcon, "Ultra tháng (1500 credit)",
                 "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
-            AddAction("Pro 38.99 TRY", PicsartAction.Pro5Yearly, Emerald, picsartIcon, "Pro Năm 38.99 TRY",
-                "Thao tác sẽ xóa token thuê bao cũ và ép bảng giá sang gói Pro Năm siêu rẻ (subscription_pro_5_yearly - TRY 38.99/năm).");
+            AddAction("Pro 38.99 TRY", PicsartAction.Pro5Yearly, Emerald, picsartIcon, "Pro Năm 38.99 TRY (500 credit)",
+                "Thao tác sẽ xóa token thuê bao cũ và mở thẳng gói Pro Năm 38.99 TRY (500 credit - subscription_pro_5_yearly).");
             AddAction("Pro 78/155 TRY", PicsartAction.Pro4YearlyIntro, Violet, picsartIcon, "Pro Năm 78/155 TRY",
                 "Thao tác sẽ xóa token thuê bao cũ, ép gói Pro Năm Intro (subscription_pro_4_yearly) và ghim offer intro-price (TRY 78.00/năm × 2 năm nếu acc còn đủ điều kiện).");
             AddAction("BF 50% 120 TRY", PicsartAction.ProBf2026Yearly, Fuchsia, picsartIcon, "Pro Năm BF 50% (120 TRY)",
