@@ -298,7 +298,7 @@ namespace ToolAdb.Features.InappTrial
             return false;
         }
 
-        private static JsonArray FilterSubscriptionOffers(JsonArray offers, bool winbackMode, out string modeNote)
+        internal static JsonArray FilterSubscriptionOffers(JsonArray offers, bool winbackMode, out string modeNote)
         {
             var result = new JsonArray();
             if (winbackMode)
@@ -404,7 +404,7 @@ namespace ToolAdb.Features.InappTrial
             return !string.IsNullOrEmpty(result);
         }
 
-        private string RunOfferTransform(
+        internal string RunOfferTransform(
             string serial,
             string packageFilter,
             Func<JsonObject, JsonArray, (JsonArray filtered, string note)> transformOffers,
