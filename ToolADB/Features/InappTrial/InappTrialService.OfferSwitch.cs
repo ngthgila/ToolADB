@@ -503,7 +503,18 @@ namespace ToolAdb.Features.InappTrial
                     if (JsonNode.Parse(curJson) is not JsonObject curProduct || curProduct["subscriptionOfferDetails"] is not JsonArray curOffers || curOffers.Count == 0)
                         continue;
 
-                    if (curOffers.Count > 1 || !snapshots.ContainsKey(keyHex))
+                    int snapOfferCount = 0;
+                    if (snapshots.TryGetValue(keyHex, out string existingSnapHex)
+                        && TryExtractProductJsonFromBlob(HexToBytes(existingSnapHex), out string existingSnapJson)
+                        && JsonNode.Parse(existingSnapJson) is JsonObject existingSnapProduct
+                        && existingSnapProduct["subscriptionOfferDetails"] is JsonArray existingSnapOffers)
+                    {
+                        snapOfferCount = existingSnapOffers.Count;
+                    }
+
+                    // Chỉ lưu/cập nhật snapshot khi chưa có bản gốc hoặc Play Store vừa fetch danh sách ĐẦY ĐỦ hơn;
+                    // tránh ghi đè mất snapshot gốc khi một chế độ giữ >1 offer (như Grok giữ 1 gói tháng + 1 gói năm).
+                    if (snapOfferCount == 0 || curOffers.Count > snapOfferCount)
                         snapshots[keyHex] = currentDataHex;
 
                     byte[] sourceBlob = snapshots.TryGetValue(keyHex, out string snapHex) ? HexToBytes(snapHex) : currentBlob;

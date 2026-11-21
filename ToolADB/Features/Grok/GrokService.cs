@@ -1,14 +1,25 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using ToolAdb.Features.InappTrial;
 using ToolAdb.Infrastructure;
 
 namespace ToolAdb.Features.Grok
 {
+    [Flags]
+    internal enum GrokTargets
+    {
+        None = 0,
+        Grok = 1,
+        GrokBot = 2,
+        Both = Grok | GrokBot
+    }
+
     internal enum GrokAction
     {
         Inspect,
         OpenPricing,
         OpenGrokBot,
+        ClearPlayCache,
         PinAllBest,
         Plus30Off3Mo,
         Plus25Off6Mo,
@@ -28,7 +39,6 @@ namespace ToolAdb.Features.Grok
     {
         private const string GrokPackage = "ai.x.grok";
         private const string GrokBotPackage = "ai.x.grok.bot";
-        private static readonly string[] TargetPackages = { GrokPackage, GrokBotPackage };
 
         private const string PlansDeeplinkCmd =
             "am start -a android.intent.action.VIEW -d 'https://grok.com/plans' " + GrokPackage;
@@ -56,12 +66,12 @@ namespace ToolAdb.Features.Grok
             [GrokAction.Premium50Off1Mo] = new(PremiumSku, OfferLaunch50, "Premium", "Premium -50% tháng đầu (vd 875 TRY)"),
             [GrokAction.Premium30Off3Mo] = new(PremiumSku, OfferDiscount30, "Premium", "Premium -30% × 3 tháng (vd 1,224.99 TRY/T)"),
 
-            [GrokAction.Super50Off1Mo] = new(SuperSku, OfferLaunch50, "Super", "Super -50% tháng đầu"),
-            [GrokAction.Super30Off3Mo] = new(SuperSku, OfferDiscount30, "Super", "Super -30% × 3 tháng"),
+            [GrokAction.Super50Off1Mo] = new(SuperSku, OfferLaunch50, "Super", "Super -50% tháng đầu (vd 3,150 TRY)"),
+            [GrokAction.Super30Off3Mo] = new(SuperSku, OfferDiscount30, "Super", "Super -30% × 3 tháng (vd 4,409.99 TRY/T)"),
 
-            [GrokAction.UltraPay1Get3] = new(UltraSku, OfferPay1Get3, "Ultra", "Ultra 1 trả 3 tháng"),
-            [GrokAction.Ultra50Off1Mo] = new(UltraSku, OfferLaunch50, "Ultra", "Ultra -50% tháng đầu"),
-            [GrokAction.Ultra30Off3Mo] = new(UltraSku, OfferDiscount30, "Ultra", "Ultra -30% × 3 tháng"),
+            [GrokAction.UltraPay1Get3] = new(UltraSku, OfferPay1Get3, "Ultra", "Ultra 1 trả 3 tháng (vd 12,499.99 TRY/3T)"),
+            [GrokAction.Ultra50Off1Mo] = new(UltraSku, OfferLaunch50, "Ultra", "Ultra -50% tháng đầu (vd 6,250 TRY)"),
+            [GrokAction.Ultra30Off3Mo] = new(UltraSku, OfferDiscount30, "Ultra", "Ultra -30% × 3 tháng (vd 8,749.99 TRY/T)"),
         };
 
         private static readonly Dictionary<string, string> BestOfferBySku = new(StringComparer.Ordinal)
@@ -84,21 +94,33 @@ namespace ToolAdb.Features.Grok
 
         internal GrokService(AdbClient adb) => _adb = adb;
 
-        internal string Run(string serial, GrokAction action)
+        internal string Run(string serial, GrokAction action, GrokTargets targets = GrokTargets.Both)
         {
             CaptureAdb(serial, 5000, "root");
             var billing = new InappTrialService(_adb);
+            string[] packages = ResolvePackages(targets);
 
             return action switch
             {
-                GrokAction.Inspect => Inspect(serial, billing),
+                GrokAction.Inspect => Inspect(serial, billing, packages),
                 GrokAction.OpenPricing => OpenPricing(serial),
                 GrokAction.OpenGrokBot => OpenGrokBot(serial),
-                GrokAction.PinAllBest => PinAllBest(serial, billing),
-                GrokAction.RestoreBase => RestoreBase(serial, billing),
-                _ when PinRules.TryGetValue(action, out var rule) => PinSingleOffer(serial, billing, rule),
+                GrokAction.ClearPlayCache => ClearPlayCache(serial, packages),
+                GrokAction.PinAllBest => PinAllBest(serial, billing, packages),
+                GrokAction.RestoreBase => RestoreBase(serial, billing, packages),
+                _ when PinRules.TryGetValue(action, out var rule) => PinSingleOffer(serial, billing, packages, rule),
                 _ => throw new ArgumentOutOfRangeException(nameof(action))
             };
+        }
+
+        private static string[] ResolvePackages(GrokTargets targets)
+        {
+            var list = new List<string>(2);
+            if (targets.HasFlag(GrokTargets.Grok)) list.Add(GrokPackage);
+            if (targets.HasFlag(GrokTargets.GrokBot)) list.Add(GrokBotPackage);
+            if (list.Count == 0)
+                throw new InvalidOperationException("Hãy tích chọn ít nhất một app (Grok hoặc Grok Bot).");
+            return list.ToArray();
         }
 
         private static string AppLabel(string pkg) => pkg == GrokBotPackage ? "Grok Bot" : "Grok";
@@ -119,10 +141,36 @@ namespace ToolAdb.Features.Grok
             return "🤖 Đã mở Grok Bot! Vào màn hình Upgrade để Play Store tải cache gói vào sku_details.db.";
         }
 
-        private static string Inspect(string serial, InappTrialService billing)
+        private string ClearPlayCache(string serial, string[] packages)
+        {
+            const string playDb = "/data/data/com.android.vending/databases/sku_details.db";
+            string safeSerial = Regex.Replace(serial, @"[^A-Za-z0-9._-]", "_");
+            string snapshotFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ToolADB", "Backups", "OfferSwitch", safeSerial, "offer_snapshots.json");
+
+            string where = string.Join(" OR ", packages.Select(p => $"cache_key LIKE '%callingPackageName={p}#%'"));
+            string stopApps = string.Join("; ", packages.Select(p => $"am force-stop {p}"));
+            CaptureAdb(serial, 12000, "shell",
+                $"{stopApps}; am force-stop com.android.vending; " +
+                $"sqlite3 {playDb} \"PRAGMA wal_checkpoint(TRUNCATE); DELETE FROM cache_table WHERE {where}; PRAGMA wal_checkpoint(TRUNCATE);\"; " +
+                $"VUID=$(stat -c '%u' /data/data/com.android.vending); chown $VUID:$VUID {playDb}* 2>/dev/null; restorecon {playDb}* 2>/dev/null");
+
+            // Xóa cache snapshot cũ của riêng app này nếu có, để lần quét tới lưu lại đầy đủ bản gốc mới.
+            try
+            {
+                if (File.Exists(snapshotFile))
+                    File.Delete(snapshotFile);
+            }
+            catch { }
+
+            return $"🔄 Đã xóa cache Play của {string.Join(" + ", packages.Select(AppLabel))}. Hãy mở app → bấm Upgrade (rồi Back lại) để Play tải lại toàn bộ offer gốc.";
+        }
+
+        private static string Inspect(string serial, InappTrialService billing, string[] packages)
         {
             var lines = new List<string>();
-            foreach (string pkg in TargetPackages)
+            foreach (string pkg in packages)
             {
                 List<BillingOfferInfo> offers = billing.ScanOffers(serial, pkg)
                     .Where(o => TierDisplayBySku.ContainsKey(o.ProductId))
@@ -157,15 +205,15 @@ namespace ToolAdb.Features.Grok
             }
 
             if (lines.Count == 0)
-                return "Chưa có cache x.subscription.* của Grok / Grok Bot trong sku_details.db. Hãy mở bảng giá và bấm Upgrade ở tab gói cần mua (rồi Back lại).";
+                return $"Chưa có cache x.subscription.* cho {string.Join(" / ", packages.Select(AppLabel))} trong sku_details.db. Hãy mở app và bấm Upgrade (rồi Back lại).";
 
             return string.Join(Environment.NewLine, lines);
         }
 
-        private static string PinSingleOffer(string serial, InappTrialService billing, PinRule rule)
+        private static string PinSingleOffer(string serial, InappTrialService billing, string[] packages, PinRule rule)
         {
             var results = new List<string>();
-            foreach (string pkg in TargetPackages)
+            foreach (string pkg in packages)
             {
                 string res = billing.RunOfferTransform(
                     serial,
@@ -183,15 +231,15 @@ namespace ToolAdb.Features.Grok
 
             if (results.Count == 0)
                 throw new InvalidDataException(
-                    $"Chưa tìm thấy SKU '{rule.SkuId}' ({rule.TierName}) kèm offer '{rule.OfferId}' trong cache của Grok hay Grok Bot. Hãy mở app → bấm Upgrade ở tab {rule.TierName} (rồi Back lại) hoặc bấm '📦 Về giá gốc' trước.");
+                    $"Không thấy SKU '{rule.SkuId}' ({rule.TierName}) kèm '{rule.OfferId}' cho {string.Join(" / ", packages.Select(AppLabel))}. Nếu cache đã bị ghim trước đó bên ngoài tool, hãy bấm '🔄 Xóa cache Play' → mở app bấm Upgrade (rồi Back) để tải lại full offer gốc.");
 
             return $"✅ Đã ghim {rule.Description} cho: {string.Join(", ", results)}.";
         }
 
-        private static string PinAllBest(string serial, InappTrialService billing)
+        private static string PinAllBest(string serial, InappTrialService billing, string[] packages)
         {
             var results = new List<string>();
-            foreach (string pkg in TargetPackages)
+            foreach (string pkg in packages)
             {
                 var pinnedTiers = new List<string>();
                 string res = billing.RunOfferTransform(
@@ -218,15 +266,15 @@ namespace ToolAdb.Features.Grok
             }
 
             if (results.Count == 0)
-                throw new InvalidDataException("Không tìm thấy offer giảm giá nào của Grok / Grok Bot trong sku_details.db. Hãy mở bảng giá app hoặc bấm '📦 Về giá gốc' trước.");
+                throw new InvalidDataException($"Không tìm thấy offer giảm giá nào cho {string.Join(" / ", packages.Select(AppLabel))}. Hãy bấm '🔄 Xóa cache Play' → mở app bấm Upgrade rồi Back để tải lại cache gốc.");
 
             return $"⭐ Đã ghim ưu đãi ngon nhất cho: {string.Join(" | ", results)}.";
         }
 
-        private static string RestoreBase(string serial, InappTrialService billing)
+        private static string RestoreBase(string serial, InappTrialService billing, string[] packages)
         {
             var restored = new List<string>();
-            foreach (string pkg in TargetPackages)
+            foreach (string pkg in packages)
             {
                 string res = billing.RunOfferTransform(
                     serial,
@@ -240,7 +288,7 @@ namespace ToolAdb.Features.Grok
             }
 
             if (restored.Count == 0)
-                throw new InvalidDataException("Chưa có SKU nào của Grok hoặc Grok Bot trong sku_details.db để khôi phục.");
+                throw new InvalidDataException($"Chưa có SKU nào của {string.Join(" / ", packages.Select(AppLabel))} trong sku_details.db.");
 
             return $"📦 Đã khôi phục giá gốc (Base): {string.Join(", ", restored)}.";
         }

@@ -393,7 +393,8 @@ namespace ToolAdb
             BuildAutoLoginTab(tabLogin);
             tabControl.TabPages.Add(tabLogin);
 
-            tabControl.TabPages.Add(new GeoSpoofTab(_adb, GetTargetDevices, SetStatus, StartProgress, StopProgress));
+            // Tạm thời ẩn tab Spoof quốc gia để giao diện gọn hơn (giữ nguyên source Features/GeoSpoof để bật lại khi cần).
+            // tabControl.TabPages.Add(new GeoSpoofTab(_adb, GetTargetDevices, SetStatus, StartProgress, StopProgress));
             tabControl.TabPages.Add(new PicsartTab(new PicsartService(_adb), GetTargetDevices));
             tabControl.TabPages.Add(new GrokTab(new GrokService(_adb), GetTargetDevices));
             tabControl.TabPages.Add(new InappTrialTab(new InappTrialService(_adb), GetTargetDevices));
