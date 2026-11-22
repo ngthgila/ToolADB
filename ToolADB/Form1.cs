@@ -154,53 +154,53 @@ namespace ToolAdb
 
             var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
 
-            // 1. Panel chứa nút (Tăng chiều cao lên để chứa đủ 4 dòng)
+            // 1. Panel chứa nút nhỏ gọn 2 cột để nhường tối đa không gian cho danh sách thiết bị
             var flowSideBtns = new FlowLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 224, // 5 nút x 43px + padding
+                Height = 102,
                 BackColor = Color.White,
-                FlowDirection = FlowDirection.TopDown, // QUAN TRỌNG: Xếp từ trên xuống dưới
-                WrapContents = false, // Không cho nhảy sang cột bên cạnh
-                Padding = new Padding(0, 5, 0, 0),
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                Padding = new Padding(0, 4, 0, 0),
                 AutoSize = false
             };
 
-            // 2. Tính toán kích thước nút (Lấy Full chiều rộng Sidebar)
-            int btnWidth = pnlSidebar.Width - 20; // Trừ padding 2 bên ra
+            // 2. Tính toán kích thước nút
+            int btnWidth = Math.Max(200, pnlSidebar.Width - 20);
+            int halfWidth = (btnWidth - 6) / 2;
 
-            // Hàm tạo nút nhanh
-            Guna2Button MkSideBtn(string txt, Color c) => new Guna2Button
+            Guna2Button MkSideBtn(string txt, Color c, int width, Padding margin) => new Guna2Button
             {
                 Text = txt,
-                Width = btnWidth, // Nút rộng bằng Sidebar
-                Height = 38,      // Chiều cao vừa phải
+                Width = width,
+                Height = 28,
                 BorderRadius = 4,
                 FillColor = c,
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
-                Margin = new Padding(0, 0, 0, 5), // Cách nút dưới 5px
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
+                Margin = margin,
                 Cursor = Cursors.Hand
             };
 
             // 3. Tạo các nút
-            var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
+            var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246), halfWidth, new Padding(0, 0, 4, 4));
             btnSelectAll.Click += (s, e) => {
                 foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = true;
             };
 
-            var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139));
+            var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139), halfWidth, new Padding(0, 0, 0, 4));
             btnSelectNone.Click += (s, e) => {
                 foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = false;
             };
 
-            var btnRefreshSide = MkSideBtn("Làm mới (Refresh)", Color.FromArgb(16, 185, 129));
+            var btnRefreshSide = MkSideBtn("Làm mới", Color.FromArgb(16, 185, 129), halfWidth, new Padding(0, 0, 4, 4));
             btnRefreshSide.Click += async (s, e) => await ReloadDevices();
 
-            var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11));
+            var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11), halfWidth, new Padding(0, 0, 0, 4));
             btnRenameSide.Click += (s, e) => ActionRenameSelected();
 
-            var btnUpdateSide = MkSideBtn($"Cập nhật (v{AppUpdater.CurrentVersionString})", Color.FromArgb(79, 70, 229));
+            var btnUpdateSide = MkSideBtn($"Cập nhật (v{AppUpdater.CurrentVersionString})", Color.FromArgb(79, 70, 229), btnWidth, new Padding(0));
             btnUpdateSide.Click += async (s, e) =>
             {
                 btnUpdateSide.Enabled = false;

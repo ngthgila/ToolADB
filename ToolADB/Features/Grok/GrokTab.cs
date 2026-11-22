@@ -14,8 +14,8 @@ namespace ToolAdb.Features.Grok
         private static readonly Color Orange = Color.FromArgb(234, 88, 12);
         private static readonly Color Rose = Color.FromArgb(190, 24, 93);
 
-        private const int ButtonWidth = 172;
-        private const int ButtonHeight = 40;
+        private const int ButtonWidth = 148;
+        private const int ButtonHeight = 32;
 
         private readonly GrokService _service;
         private readonly Func<List<string>> _getSelectedDevices;
@@ -65,14 +65,18 @@ namespace ToolAdb.Features.Grok
 
             _actions = new FlowLayoutPanel
             {
-                Dock = DockStyle.Fill, AutoSize = true, WrapContents = true,
-                Padding = new Padding(4)
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = true,
+                AutoScroll = true,
+                Padding = new Padding(2)
             };
 
             AddAction("🔍 Kiểm tra", GrokAction.Inspect, Slate, null, "Kiểm tra cache & offer của app đang tích chọn", isPromo: false);
             AddAction("Mở Grok", GrokAction.OpenPricing, Blue, _grokIcon, "Mở thẳng trang bảng giá app Grok (ai.x.grok)", isPromo: false);
             AddAction("Mở Grok Bot", GrokAction.OpenGrokBot, DarkSlate, _grokBotIcon, "Mở app Grok Bot (ai.x.grok.bot)", isPromo: false);
-            AddAction("⭐ Ghim all tốt nhất", GrokAction.PinAllBest, Amber, null,
+            AddAction("⭐ Ghim tốt nhất", GrokAction.PinAllBest, Amber, null,
                 "Ghim cùng lúc ưu đãi ngon nhất cho mọi gói đã cache của app đang chọn (Plus -30%x3T / fallback -25%x6T, Premium 1 trả 3T, Super -50% 1T, Ultra 1 trả 3T)",
                 "Thao tác sẽ ghim ưu đãi tháng tốt nhất (Plus tự fallback sang -25% × 6T nếu thiếu -30% × 3T) cho toàn bộ SKU đã cache.\n⚠️ Lưu ý: Nếu trên app Grok vẫn hiện giá gốc (server chưa cấp ưu đãi), thanh toán xong có thể bị từ chối STORE_PROOF_OFFER_MISMATCH.", isPromo: true);
             AddAction("📦 Về giá gốc", GrokAction.RestoreBase, Slate, TabUi.LoadAppIcon("base.png"),
@@ -123,10 +127,12 @@ namespace ToolAdb.Features.Grok
                 "Ultra (x.subscription.ultra): Giảm 30% trong 3 tháng đầu (x-subscription-benefit-discount-30pct)",
                 "Ghim gói Ultra giảm 30% trong 3 tháng đầu (vd 8,749.99 TRY/tháng × 3) và khởi động lại app.", isPromo: true);
 
-            _summary = TabUi.SummaryLabel("Chọn app ở thanh trên (Grok / Grok Bot). Mở tab gói → bấm Upgrade rồi Back để Play tải cache trước khi ghim. (Lưu ý: app cần hiện sẵn ưu đãi ở bảng giá, nếu không sẽ lỗi STORE_PROOF_OFFER_MISMATCH khi thanh toán.)");
+            _summary = TabUi.SummaryLabel("Chọn app ở trên (Grok / Grok Bot). Mở tab gói → bấm Upgrade rồi Back để tải cache (nếu app chỉ hiện giá gốc sẽ bị STORE_PROOF_OFFER_MISMATCH).");
+            _summary.Font = new Font("Segoe UI", 8.5f);
+            _summary.Padding = new Padding(4, 3, 4, 3);
             _results = TabUi.ResultsGrid("Kết quả");
 
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(8) };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(6) };
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -135,7 +141,20 @@ namespace ToolAdb.Features.Grok
             layout.Controls.Add(_actions, 0, 1);
             layout.Controls.Add(_summary, 0, 2);
             layout.Controls.Add(_results, 0, 3);
+
+            void SyncFlowConstraints()
+            {
+                int availW = Math.Max(220, layout.ClientSize.Width - layout.Padding.Horizontal);
+                int maxActionsH = Math.Max(140, layout.ClientSize.Height * 52 / 100);
+                targetBar.MaximumSize = new Size(availW, 0);
+                _actions.MaximumSize = new Size(availW, maxActionsH);
+                _summary.MaximumSize = new Size(availW, 0);
+            }
+
+            layout.SizeChanged += (_, _) => SyncFlowConstraints();
+            SizeChanged += (_, _) => SyncFlowConstraints();
             Controls.Add(layout);
+            SyncFlowConstraints();
 
             UpdateTargetVisuals();
         }
@@ -201,11 +220,11 @@ namespace ToolAdb.Features.Grok
                 btn.Image = icon;
                 if (icon != null)
                 {
-                    btn.ImageSize = new Size(20, 20);
+                    btn.ImageSize = new Size(18, 18);
                     btn.ImageAlign = HorizontalAlignment.Left;
                     btn.TextAlign = HorizontalAlignment.Left;
-                    btn.ImageOffset = new Point(6, 0);
-                    btn.TextOffset = new Point(4, 0);
+                    btn.ImageOffset = new Point(4, 0);
+                    btn.TextOffset = new Point(2, 0);
                 }
                 else
                 {
@@ -218,6 +237,14 @@ namespace ToolAdb.Features.Grok
         private void AddAction(string text, GrokAction action, Color color, Image icon, string tooltip, string confirmation = null, bool isPromo = false)
         {
             var button = TabUi.ActionButton(text, color, ButtonWidth, icon, ButtonHeight);
+            button.Font = new Font("Segoe UI Semibold", 8.5f);
+            button.Margin = new Padding(3);
+            if (icon != null)
+            {
+                button.ImageSize = new Size(18, 18);
+                button.ImageOffset = new Point(4, 0);
+                button.TextOffset = new Point(2, 0);
+            }
             _toolTip.SetToolTip(button, tooltip);
             button.Click += async (sender, args) => await RunAsync(action, confirmation);
             _actions.Controls.Add(button);
