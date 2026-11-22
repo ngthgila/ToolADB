@@ -131,34 +131,35 @@ namespace ToolAdb
         private void BuildModernLayout()
         {
             this.Controls.Clear();
-            this.Size = new Size(800, 600);
+            this.Size = new Size(960, 640);
+            this.MinimumSize = new Size(760, 520);
             this.Text = $"ToolADB v{AppUpdater.CurrentVersionString}";
             this.BackColor = Color.FromArgb(243, 244, 246);
             this.Font = new Font("Segoe UI", 9f);
 
+            const int sidebarWidth = 170;
             var splitMain = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 FixedPanel = FixedPanel.Panel1,
-                SplitterDistance = 260,
                 IsSplitterFixed = true,
                 BackColor = Color.FromArgb(229, 231, 235)
             };
 
-            // 1. SIDEBAR (THANH BÊN TRÁI - DẠNG DỌC)
+            // 1. SIDEBAR (THANH BÊN TRÁI - DẠNG DỌC GỌN)
             // ==================================================
             var pnlSidebar = splitMain.Panel1;
             pnlSidebar.Controls.Clear(); // Xóa sạch cái cũ
             pnlSidebar.BackColor = Color.White;
-            pnlSidebar.Padding = new Padding(10);
+            pnlSidebar.Padding = new Padding(6);
 
-            var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
+            var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 26, Font = new Font("Segoe UI", 9.5f, FontStyle.Bold), ForeColor = Color.Green };
 
             // 1. Panel chứa 5 nút nhỏ gọn xếp thành 1 cột dọc (không đẩy ngang sidebar)
             var sideBtnTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 144,
+                Height = 136,
                 ColumnCount = 1,
                 RowCount = 5,
                 BackColor = Color.White,
@@ -168,7 +169,7 @@ namespace ToolAdb
             };
             sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             for (int r = 0; r < 5; r++)
-                sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+                sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
 
             Guna2Button MkSideBtn(string txt, Color c) => new Guna2Button
             {
@@ -177,7 +178,7 @@ namespace ToolAdb
                 BorderRadius = 4,
                 FillColor = c,
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
                 Margin = new Padding(0, 2, 0, 2),
                 Cursor = Cursors.Hand
             };
@@ -244,19 +245,18 @@ namespace ToolAdb
             var colCheck = new DataGridViewCheckBoxColumn
             {
                 HeaderText = "",
-                Width = 30,
+                Width = 26,
                 TrueValue = true,
                 FalseValue = false,
                 AutoSizeMode = DataGridViewAutoSizeColumnMode.None
             };
 
-            // Cột 1: Tên thiết bị (Đã bỏ HeaderText)
+            // Cột 1: Tên thiết bị (tự co giãn vừa khít chiều ngang sidebar)
             var colName = new DataGridViewTextBoxColumn
             {
                 HeaderText = "",
                 ReadOnly = true,
-                Width = 180, // Độ rộng cố định
-                AutoSizeMode = DataGridViewAutoSizeColumnMode.None
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
             };
             colName.DefaultCellStyle.Font = new Font("Segoe UI Semibold", 9f);
             colName.DefaultCellStyle.ForeColor = Color.FromArgb(51, 65, 85);
@@ -413,9 +413,22 @@ namespace ToolAdb
             tabControl.TabPages.Add(new GrokTab(new GrokService(_adb), GetTargetDevices));
             tabControl.TabPages.Add(new InappTrialTab(new InappTrialService(_adb), GetTargetDevices));
 
-            // Chỉ cần thêm thẳng giao diện chính vào Form
+            // Chỉ cần thêm thẳng giao diện chính vào Form rồi mới khóa chiều ngang sidebar gọn 170px
             this.Controls.Add(splitMain);
-            try { splitMain.SplitterDistance = 260; } catch { }
+            void ApplySidebarWidth()
+            {
+                if (splitMain.Width < 300) return;
+                try
+                {
+                    splitMain.Panel1MinSize = 140;
+                    splitMain.Panel2MinSize = 150;
+                    splitMain.SplitterDistance = sidebarWidth;
+                }
+                catch { }
+            }
+            ApplySidebarWidth();
+            splitMain.HandleCreated += (_, _) => ApplySidebarWidth();
+            this.Shown += (_, _) => ApplySidebarWidth();
 
             // Đảm bảo nó luôn nằm trên cùng (dù thực ra giờ chỉ còn một mình nó)
             splitMain.BringToFront();
