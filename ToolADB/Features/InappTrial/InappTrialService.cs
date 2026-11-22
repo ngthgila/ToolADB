@@ -10,7 +10,6 @@ namespace ToolAdb.Features.InappTrial
         ZoomNoTrial,
         CrunchyrollNoTrial,
         Canva50Off3Months,
-        Canva50OffMonthly,
         CamScanner149Try,
         BlinkistPro90Off,
         InShotYearly50Off
@@ -35,8 +34,7 @@ namespace ToolAdb.Features.InappTrial
                 InappTrialAction.DuolingoNoTrial => PatchDuolingoNoTrial(serial),
                 InappTrialAction.ZoomNoTrial => PatchZoomNoTrial(serial),
                 InappTrialAction.CrunchyrollNoTrial => PatchCrunchyrollNoTrial(serial),
-                InappTrialAction.Canva50Off3Months => PatchCanva50Off(serial, monthlyInstallments: false),
-                InappTrialAction.Canva50OffMonthly => PatchCanva50Off(serial, monthlyInstallments: true),
+                InappTrialAction.Canva50Off3Months => PatchCanva50Off(serial),
                 InappTrialAction.CamScanner149Try => PatchCamScanner149Try(serial),
                 InappTrialAction.BlinkistPro90Off => PatchBlinkistPro90Off(serial),
                 InappTrialAction.InShotYearly50Off => PatchInShotYearly50Off(serial),

@@ -74,12 +74,16 @@ namespace ToolAdb.Features.Grok
             [GrokAction.Ultra30Off3Mo] = new(UltraSku, OfferDiscount30, "Ultra", "Ultra -30% × 3 tháng (vd 8,749.99 TRY/T)"),
         };
 
-        private static readonly Dictionary<string, string> BestOfferBySku = new(StringComparer.Ordinal)
+        private const string StoreProofWarning =
+            "⚠️ Lưu ý: Nếu trên app Grok vẫn hiện giá gốc (server chưa cấp ưu đãi cho tài khoản), thanh toán xong có thể bị từ chối 'STORE_PROOF_OFFER_MISMATCH' (Google Play tự hoàn tiền).";
+
+        // Thứ tự ưu tiên cho nút "Ghim all tốt nhất": Plus tự fallback sang -25% × 6T nếu Play không còn -30% × 3T.
+        private static readonly Dictionary<string, string[]> BestOffersBySku = new(StringComparer.Ordinal)
         {
-            [PlusSku] = OfferDiscount30,
-            [PremiumSku] = OfferPay1Get3,
-            [SuperSku] = OfferLaunch50,
-            [UltraSku] = OfferPay1Get3,
+            [PlusSku] = new[] { OfferDiscount30, OfferPlusLaunch25 },
+            [PremiumSku] = new[] { OfferPay1Get3, OfferBfPay1Get2, OfferLaunch50, OfferDiscount30 },
+            [SuperSku] = new[] { OfferLaunch50, OfferDiscount30 },
+            [UltraSku] = new[] { OfferPay1Get3, OfferLaunch50, OfferDiscount30 },
         };
 
         private static readonly Dictionary<string, string> TierDisplayBySku = new(StringComparer.Ordinal)
@@ -230,10 +234,49 @@ namespace ToolAdb.Features.Grok
             }
 
             if (results.Count == 0)
-                throw new InvalidDataException(
-                    $"Không thấy SKU '{rule.SkuId}' ({rule.TierName}) kèm '{rule.OfferId}' cho {string.Join(" / ", packages.Select(AppLabel))}. Nếu cache đã bị ghim trước đó bên ngoài tool, hãy bấm '🔄 Xóa cache Play' → mở app bấm Upgrade (rồi Back) để tải lại full offer gốc.");
+                throw new InvalidDataException(BuildMissingRuleDiagnostic(serial, billing, packages, rule));
 
-            return $"✅ Đã ghim {rule.Description} cho: {string.Join(", ", results)}.";
+            return $"✅ Đã ghim {rule.Description} cho: {string.Join(", ", results)}.{Environment.NewLine}{StoreProofWarning}";
+        }
+
+        private static string BuildMissingRuleDiagnostic(string serial, InappTrialService billing, string[] packages, PinRule rule)
+        {
+            var missingSkuApps = new List<string>();
+            var missingOfferDetails = new List<string>();
+
+            foreach (string pkg in packages)
+            {
+                string label = AppLabel(pkg);
+                List<BillingOfferInfo> skuOffers = billing.ScanOffers(serial, pkg)
+                    .Where(o => string.Equals(o.ProductId, rule.SkuId, StringComparison.Ordinal))
+                    .ToList();
+
+                if (skuOffers.Count == 0)
+                {
+                    missingSkuApps.Add(label);
+                }
+                else
+                {
+                    var availableIds = skuOffers
+                        .Where(o => o.Phase == 1 && !string.IsNullOrEmpty(o.OfferId))
+                        .Select(o => o.OfferId)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+                    string availableText = availableIds.Count > 0 ? string.Join(", ", availableIds) : "chỉ có giá gốc";
+                    missingOfferDetails.Add($"{label} (hiện có: {availableText})");
+                }
+            }
+
+            var parts = new List<string>();
+            if (missingOfferDetails.Count > 0)
+            {
+                parts.Add($"SKU '{rule.SkuId}' ({rule.TierName}) đã có trong cache nhưng KHÔNG có offer '{rule.OfferId}' ở: {string.Join("; ", missingOfferDetails)}. Nếu trước đó đã ghim tay bên ngoài, bấm '🔄 Xóa cache Play' → mở app bấm Upgrade rồi Back để tải lại full offer.");
+            }
+            if (missingSkuApps.Count > 0)
+            {
+                parts.Add($"Chưa thấy SKU '{rule.SkuId}' ({rule.TierName}) trong sku_details.db cho {string.Join(" / ", missingSkuApps)}. Hãy mở app → chọn tab {rule.TierName} → bấm Upgrade (rồi Back) để Google Play tải cache.");
+            }
+            return string.Join(" ", parts);
         }
 
         private static string PinAllBest(string serial, InappTrialService billing, string[] packages)
@@ -248,13 +291,21 @@ namespace ToolAdb.Features.Grok
                     (srcProduct, srcOffers) =>
                     {
                         string pid = srcProduct["productId"]?.GetValue<string>() ?? string.Empty;
-                        if (!BestOfferBySku.TryGetValue(pid, out string targetOfferId))
+                        if (!BestOffersBySku.TryGetValue(pid, out string[] candidateOfferIds))
                             return (null, null);
 
-                        var built = BuildPinnedOffers(srcOffers, targetOfferId);
-                        if (built.filtered != null)
-                            pinnedTiers.Add(TierDisplayBySku.GetValueOrDefault(pid, pid));
-                        return built;
+                        foreach (string targetOfferId in candidateOfferIds)
+                        {
+                            var built = BuildPinnedOffers(srcOffers, targetOfferId);
+                            if (built.filtered != null)
+                            {
+                                string tier = TierDisplayBySku.GetValueOrDefault(pid, pid);
+                                string tag = targetOfferId == OfferPlusLaunch25 ? $"{tier}(-25%×6T)" : tier;
+                                pinnedTiers.Add(tag);
+                                return built;
+                            }
+                        }
+                        return (null, null);
                     },
                     (updatedRows, _, counts) => counts.GetValueOrDefault("pinned") > 0
                         ? $"{AppLabel(pkg)} [{string.Join("+", pinnedTiers.Distinct())}]"
@@ -266,9 +317,9 @@ namespace ToolAdb.Features.Grok
             }
 
             if (results.Count == 0)
-                throw new InvalidDataException($"Không tìm thấy offer giảm giá nào cho {string.Join(" / ", packages.Select(AppLabel))}. Hãy bấm '🔄 Xóa cache Play' → mở app bấm Upgrade rồi Back để tải lại cache gốc.");
+                throw new InvalidDataException($"Không tìm thấy offer giảm giá nào phù hợp cho {string.Join(" / ", packages.Select(AppLabel))}. Hãy bấm '🔄 Xóa cache Play' → mở app bấm Upgrade rồi Back để tải lại cache gốc.");
 
-            return $"⭐ Đã ghim ưu đãi ngon nhất cho: {string.Join(" | ", results)}.";
+            return $"⭐ Đã ghim ưu đãi ngon nhất cho: {string.Join(" | ", results)}.{Environment.NewLine}{StoreProofWarning}";
         }
 
         private static string RestoreBase(string serial, InappTrialService billing, string[] packages)

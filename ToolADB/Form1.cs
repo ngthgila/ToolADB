@@ -105,7 +105,11 @@ namespace ToolAdb
             BuildModernLayout();
             ValidateAdbExists();
             TryWarmAdbServer();
-            Shown += async (s, e) => await ReloadDevices();
+            Shown += async (s, e) =>
+            {
+                await ReloadDevices();
+                _ = AppUpdater.CheckAndPromptAsync(this, silent: true);
+            };
 
             // Timer 2FA (1s)
             _totpTimer = new System.Windows.Forms.Timer(components) { Interval = 1000 };
@@ -128,7 +132,7 @@ namespace ToolAdb
         {
             this.Controls.Clear();
             this.Size = new Size(800, 600);
-            this.Text = "ADB Pro v2.5";
+            this.Text = $"ToolADB v{AppUpdater.CurrentVersionString}";
             this.BackColor = Color.FromArgb(243, 244, 246);
             this.Font = new Font("Segoe UI", 9f);
 
@@ -154,7 +158,7 @@ namespace ToolAdb
             var flowSideBtns = new FlowLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 180, // 4 nút x 40px + khoảng cách = ~180
+                Height = 224, // 5 nút x 43px + padding
                 BackColor = Color.White,
                 FlowDirection = FlowDirection.TopDown, // QUAN TRỌNG: Xếp từ trên xuống dưới
                 WrapContents = false, // Không cho nhảy sang cột bên cạnh
@@ -196,8 +200,16 @@ namespace ToolAdb
             var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11));
             btnRenameSide.Click += (s, e) => ActionRenameSelected();
 
+            var btnUpdateSide = MkSideBtn($"Cập nhật (v{AppUpdater.CurrentVersionString})", Color.FromArgb(79, 70, 229));
+            btnUpdateSide.Click += async (s, e) =>
+            {
+                btnUpdateSide.Enabled = false;
+                try { await AppUpdater.CheckAndPromptAsync(this, silent: false); }
+                finally { if (!btnUpdateSide.IsDisposed) btnUpdateSide.Enabled = true; }
+            };
+
             // Thêm vào FlowLayout
-            flowSideBtns.Controls.AddRange(new Control[] { btnSelectAll, btnSelectNone, btnRefreshSide, btnRenameSide });
+            flowSideBtns.Controls.AddRange(new Control[] { btnSelectAll, btnSelectNone, btnRefreshSide, btnRenameSide, btnUpdateSide });
 
             // 4. Bảng Thiết bị (Guna2DataGridView)
             _gridDevices = new Guna2DataGridView
@@ -1818,7 +1830,7 @@ setprop sys.powerctl reboot
         private void SetStatus(string t)
         {
             // Hiện thông báo lên tiêu đề cửa sổ thay vì Label
-            string title = $"ADB Pro v2.5 - [{t}]";
+            string title = $"ToolADB v{AppUpdater.CurrentVersionString} - [{t}]";
             if (InvokeRequired) Invoke(new Action(() => this.Text = title));
             else this.Text = title;
         }

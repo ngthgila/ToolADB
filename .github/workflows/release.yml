@@ -1,0 +1,73 @@
+name: Build and Release ToolADB
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (vd: v1.2.21). Để trống sẽ đọc từ ToolADB.csproj'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve release tag and version
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag) -and "${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}"
+          }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            [xml]$proj = Get-Content "ToolADB/ToolADB.csproj"
+            $ver = $proj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+            if ([string]::IsNullOrWhiteSpace($ver)) { $ver = "1.0.0" }
+            $tag = "v$ver"
+          }
+          $verNum = $tag.TrimStart('v', 'V')
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$verNum" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Publish single-file ToolADB.exe
+        shell: pwsh
+        run: |
+          dotnet publish ToolADB/ToolADB.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained false `
+            -p:PublishSingleFile=true `
+            -p:DebugType=none `
+            -p:DebugSymbols=false `
+            -p:Version=${{ steps.meta.outputs.version }} `
+            -o publish_out
+
+      - name: Package ToolADB-win-x64.zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish_out\* -DestinationPath ToolADB-win-x64.zip -Force
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            publish_out/ToolADB.exe
+            ToolADB-win-x64.zip

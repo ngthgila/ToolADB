@@ -11,7 +11,6 @@ namespace ToolAdb.Features.InappTrial
         private static readonly Color Fuchsia = Color.FromArgb(192, 38, 211);
         private static readonly Color Orange = Color.FromArgb(234, 88, 12);
         private static readonly Color Violet = Color.FromArgb(124, 58, 237);
-        private static readonly Color Teal = Color.FromArgb(13, 148, 136);
 
         private const int ButtonWidth = 160;
         private const int ButtonHeight = 40;
@@ -54,11 +53,8 @@ namespace ToolAdb.Features.InappTrial
                 "Crunchyroll: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Crunchyroll bỏ offer trial, giữ base plan mua thẳng.");
             AddAction("Giảm 50% (3T)", InappTrialAction.Canva50Off3Months, Violet, "canva.png",
-                "Canva: Giảm 50% (Trả 1 lần 3 tháng)",
-                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva giảm 50% (trả 1 lần dùng 3 tháng).");
-            AddAction("50% Biz (3T)", InappTrialAction.Canva50OffMonthly, Teal, "canva.png",
-                "Canva Business: Giảm 50% (Thu từng tháng x3)",
-                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Business giảm 50% (thu từng tháng x3).");
+                "Canva: Giảm 50% Pro & Business (Thu từng tháng x3)",
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bật ưu đãi Canva Pro & Business giảm 50% (thu từng tháng x3).");
             AddAction("Năm 149 TRY", InappTrialAction.CamScanner149Try, Slate, "camscanner.png",
                 "CamScanner: Gói năm 149 TRY (bỏ trial - trả tiền luôn)",
                 "Thao tác sẽ ghim offer 'firstyeardiscount' (TRY 149.00/năm, bỏ trial - trả tiền luôn) cho CamScanner và khởi động lại app.");

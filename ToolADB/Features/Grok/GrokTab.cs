@@ -73,8 +73,8 @@ namespace ToolAdb.Features.Grok
             AddAction("Mở Grok", GrokAction.OpenPricing, Blue, _grokIcon, "Mở thẳng trang bảng giá app Grok (ai.x.grok)", isPromo: false);
             AddAction("Mở Grok Bot", GrokAction.OpenGrokBot, DarkSlate, _grokBotIcon, "Mở app Grok Bot (ai.x.grok.bot)", isPromo: false);
             AddAction("⭐ Ghim all tốt nhất", GrokAction.PinAllBest, Amber, null,
-                "Ghim cùng lúc ưu đãi ngon nhất cho mọi gói đã cache của app đang chọn (Plus -30%x3T, Premium 1 trả 3T, Super -50% 1T, Ultra 1 trả 3T)",
-                "Thao tác sẽ ghim ưu đãi tháng tốt nhất cho toàn bộ SKU đã cache của app đang tích chọn.", isPromo: true);
+                "Ghim cùng lúc ưu đãi ngon nhất cho mọi gói đã cache của app đang chọn (Plus -30%x3T / fallback -25%x6T, Premium 1 trả 3T, Super -50% 1T, Ultra 1 trả 3T)",
+                "Thao tác sẽ ghim ưu đãi tháng tốt nhất (Plus tự fallback sang -25% × 6T nếu thiếu -30% × 3T) cho toàn bộ SKU đã cache.\n⚠️ Lưu ý: Nếu trên app Grok vẫn hiện giá gốc (server chưa cấp ưu đãi), thanh toán xong có thể bị từ chối STORE_PROOF_OFFER_MISMATCH.", isPromo: true);
             AddAction("📦 Về giá gốc", GrokAction.RestoreBase, Slate, TabUi.LoadAppIcon("base.png"),
                 "Khôi phục toàn bộ offer gốc cho app đang chọn từ bản sao lưu snapshot.",
                 "Thao tác sẽ khôi phục lại toàn bộ offer gốc trong sku_details.db cho app đang chọn.", isPromo: false);
@@ -123,7 +123,7 @@ namespace ToolAdb.Features.Grok
                 "Ultra (x.subscription.ultra): Giảm 30% trong 3 tháng đầu (x-subscription-benefit-discount-30pct)",
                 "Ghim gói Ultra giảm 30% trong 3 tháng đầu (vd 8,749.99 TRY/tháng × 3) và khởi động lại app.", isPromo: true);
 
-            _summary = TabUi.SummaryLabel("Chọn app ở thanh trên (Grok / Grok Bot). Mở tab gói → bấm Upgrade rồi Back để Play tải cache trước khi ghim.");
+            _summary = TabUi.SummaryLabel("Chọn app ở thanh trên (Grok / Grok Bot). Mở tab gói → bấm Upgrade rồi Back để Play tải cache trước khi ghim. (Lưu ý: app cần hiện sẵn ưu đãi ở bảng giá, nếu không sẽ lỗi STORE_PROOF_OFFER_MISMATCH khi thanh toán.)");
             _results = TabUi.ResultsGrid("Kết quả");
 
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new Padding(8) };
