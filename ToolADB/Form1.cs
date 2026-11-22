@@ -154,22 +154,21 @@ namespace ToolAdb
 
             var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
 
-            // 1. Panel chứa nút nhỏ gọn 2 cột bằng TableLayoutPanel để không bao giờ bị tràn/rớt dòng theo DPI
+            // 1. Panel chứa 5 nút nhỏ gọn xếp thành 1 cột dọc (không đẩy ngang sidebar)
             var sideBtnTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 96,
-                ColumnCount = 2,
-                RowCount = 3,
+                Height = 144,
+                ColumnCount = 1,
+                RowCount = 5,
                 BackColor = Color.White,
                 Padding = new Padding(0, 4, 0, 0),
-                Margin = new Padding(0)
+                Margin = new Padding(0),
+                AutoSize = false
             };
-            sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
+            sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            for (int r = 0; r < 5; r++)
+                sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
 
             Guna2Button MkSideBtn(string txt, Color c) => new Guna2Button
             {
@@ -178,8 +177,8 @@ namespace ToolAdb
                 BorderRadius = 4,
                 FillColor = c,
                 ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                Margin = new Padding(2),
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                Margin = new Padding(0, 2, 0, 2),
                 Cursor = Cursors.Hand
             };
 
@@ -209,11 +208,10 @@ namespace ToolAdb
             };
 
             sideBtnTable.Controls.Add(btnSelectAll, 0, 0);
-            sideBtnTable.Controls.Add(btnSelectNone, 1, 0);
-            sideBtnTable.Controls.Add(btnRefreshSide, 0, 1);
-            sideBtnTable.Controls.Add(btnRenameSide, 1, 1);
-            sideBtnTable.Controls.Add(btnUpdateSide, 0, 2);
-            sideBtnTable.SetColumnSpan(btnUpdateSide, 2);
+            sideBtnTable.Controls.Add(btnSelectNone, 0, 1);
+            sideBtnTable.Controls.Add(btnRefreshSide, 0, 2);
+            sideBtnTable.Controls.Add(btnRenameSide, 0, 3);
+            sideBtnTable.Controls.Add(btnUpdateSide, 0, 4);
 
             // 4. Bảng Thiết bị (Guna2DataGridView)
             _gridDevices = new Guna2DataGridView
