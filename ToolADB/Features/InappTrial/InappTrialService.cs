@@ -6,6 +6,7 @@ namespace ToolAdb.Features.InappTrial
     {
         GrammarlyNoTrial,
         ChessNoTrial,
+        Chess50Off,
         DuolingoNoTrial,
         ZoomNoTrial,
         CrunchyrollNoTrial,
@@ -31,6 +32,7 @@ namespace ToolAdb.Features.InappTrial
             {
                 InappTrialAction.GrammarlyNoTrial => PatchGrammarlyNoTrial(serial),
                 InappTrialAction.ChessNoTrial => PatchChessNoTrial(serial),
+                InappTrialAction.Chess50Off => PatchChess50Off(serial),
                 InappTrialAction.DuolingoNoTrial => PatchDuolingoNoTrial(serial),
                 InappTrialAction.ZoomNoTrial => PatchZoomNoTrial(serial),
                 InappTrialAction.CrunchyrollNoTrial => PatchCrunchyrollNoTrial(serial),

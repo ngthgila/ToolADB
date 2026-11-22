@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace ToolAdb.Features.InappTrial
@@ -146,6 +147,44 @@ namespace ToolAdb.Features.InappTrial
             {
                 try { File.WriteAllText(logFile, log.ToString(), new UTF8Encoding(false)); } catch (IOException) { }
             }
+        }
+
+        private const string ChessPackage = "com.chess";
+        private const string ChessDiscount50Suffix = "discount50percent";
+
+        /// <summary>
+        /// Ghim duy nhất offer '*discount50percent' (loại bỏ trial, ưu đãi khác và base plan) cho Chess.com
+        /// để e.a() rơi xuống phần tử đầu danh sách và CheckoutActivity/BillingLauncher mở Play ở giá -50%.
+        /// </summary>
+        private string PatchChess50Off(string serial)
+        {
+            string result = RunOfferTransform(
+                serial,
+                ChessPackage,
+                (_, srcOffers) =>
+                {
+                    foreach (JsonNode node in srcOffers)
+                    {
+                        if (node is not JsonObject obj) continue;
+                        string oid = obj["offerId"]?.GetValue<string>() ?? string.Empty;
+                        if (oid.EndsWith(ChessDiscount50Suffix, StringComparison.Ordinal))
+                        {
+                            return (new JsonArray { obj.DeepClone() }, "chess_discount50");
+                        }
+                    }
+                    return (null, null);
+                },
+                (updatedRows, totalRows, counts) => counts.GetValueOrDefault("chess_discount50") > 0
+                    ? $"♟ Chess.com Giảm 50% ({updatedRows}/{totalRows} SKU): đã ghim offer '*{ChessDiscount50Suffix}' (bỏ trial & base plan) và khởi động lại app."
+                    : null,
+                relaunchApp: true,
+                throwIfNotFound: true);
+
+            if (string.IsNullOrEmpty(result))
+                throw new InvalidDataException(
+                    $"Không tìm thấy offer '*{ChessDiscount50Suffix}' trong cache Google Play của Chess.com. Hãy mở màn hình nâng cấp Chess.com một lần rồi thử lại.");
+
+            return result;
         }
     }
 }

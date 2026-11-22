@@ -43,6 +43,9 @@ namespace ToolAdb.Features.InappTrial
             AddAction("Bỏ trial", InappTrialAction.ChessNoTrial, Blue, "chess.png",
                 "Chess.com: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Chess.com bỏ offer trial, mua thẳng.");
+            AddAction("Giảm 50%", InappTrialAction.Chess50Off, Violet, "chess.png",
+                "Chess.com: Giảm 50% (*discount50percent, bỏ trial & base plan)",
+                "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để Chess.com chỉ giữ offer giảm 50% (*discount50percent, bỏ trial và base plan).");
             AddAction("Bỏ trial", InappTrialAction.DuolingoNoTrial, Emerald, "duolingo.png",
                 "Duolingo: Bỏ trial",
                 "Thao tác sẽ sửa cache Google Play Billing (có sao lưu) để bảng giá Duolingo bỏ offer trial, mua thẳng.");

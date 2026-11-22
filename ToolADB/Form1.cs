@@ -131,8 +131,9 @@ namespace ToolAdb
         private void BuildModernLayout()
         {
             this.Controls.Clear();
-            this.Size = new Size(960, 640);
-            this.MinimumSize = new Size(760, 520);
+            var minSize = new Size(760, 520);
+            this.MinimumSize = minSize;
+            this.Size = minSize;
             this.Text = $"ToolADB v{AppUpdater.CurrentVersionString}";
             this.BackColor = Color.FromArgb(243, 244, 246);
             this.Font = new Font("Segoe UI", 9f);

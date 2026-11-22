@@ -378,7 +378,12 @@ namespace ToolAdb.Features.InappTrial
                 });
         }
 
-        internal bool PinSingleOfferForSkuIfCached(string serial, string packageFilter, string skuId, string preferredOfferId)
+        internal bool PinSingleOfferForSkuIfCached(
+            string serial,
+            string packageFilter,
+            string skuId,
+            string preferredOfferId,
+            bool preserveBasePlan = false)
         {
             if (string.IsNullOrEmpty(skuId) || string.IsNullOrEmpty(preferredOfferId))
                 return false;
@@ -388,14 +393,44 @@ namespace ToolAdb.Features.InappTrial
                 packageFilter,
                 (_, srcOffers) =>
                 {
+                    JsonObject targetOffer = null;
+                    var baseOffers = new List<JsonObject>();
+
                     foreach (JsonNode node in srcOffers)
                     {
                         if (node is not JsonObject obj) continue;
                         string oid = obj["offerId"]?.GetValue<string>() ?? string.Empty;
                         if (string.Equals(oid, preferredOfferId, StringComparison.Ordinal))
-                            return (new JsonArray { obj.DeepClone() }, "pinned");
+                        {
+                            targetOffer ??= obj;
+                        }
+                        else if (preserveBasePlan && string.IsNullOrEmpty(oid))
+                        {
+                            baseOffers.Add(obj);
+                        }
                     }
-                    return (null, null);
+
+                    if (targetOffer == null)
+                        return (null, null);
+
+                    // Một số app (như Blinkist PurchasablePlanResolver) bắt buộc phải có base plan (offerId == null)
+                    // đi kèm offer ưu đãi; nếu cache hiện tại thiếu base plan thì bỏ qua để caller có thể xóa cache cho Play tải lại đủ.
+                    if (preserveBasePlan && baseOffers.Count == 0)
+                        return (null, null);
+
+                    var kept = new JsonArray { targetOffer.DeepClone() };
+                    if (preserveBasePlan)
+                    {
+                        string targetBasePlanId = targetOffer["basePlanId"]?.GetValue<string>() ?? string.Empty;
+                        var matchingBases = baseOffers.Where(b =>
+                            string.IsNullOrEmpty(targetBasePlanId) ||
+                            string.Equals(b["basePlanId"]?.GetValue<string>() ?? string.Empty, targetBasePlanId, StringComparison.Ordinal)).ToList();
+
+                        foreach (JsonObject b in (matchingBases.Count > 0 ? matchingBases : baseOffers))
+                            kept.Add(b.DeepClone());
+                    }
+
+                    return (kept, "pinned");
                 },
                 (updatedRows, _, counts) => counts.GetValueOrDefault("pinned") > 0 ? $"OK:{updatedRows}" : null,
                 skuIdFilter: skuId,
