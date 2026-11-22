@@ -154,53 +154,53 @@ namespace ToolAdb
 
             var lblSideTitle = new Label { Text = "Thiết Bị", Dock = DockStyle.Top, Height = 30, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.Green };
 
-            // 1. Panel chứa nút nhỏ gọn 2 cột để nhường tối đa không gian cho danh sách thiết bị
-            var flowSideBtns = new FlowLayoutPanel
+            // 1. Panel chứa nút nhỏ gọn 2 cột bằng TableLayoutPanel để không bao giờ bị tràn/rớt dòng theo DPI
+            var sideBtnTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 102,
+                Height = 96,
+                ColumnCount = 2,
+                RowCount = 3,
                 BackColor = Color.White,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
                 Padding = new Padding(0, 4, 0, 0),
-                AutoSize = false
+                Margin = new Padding(0)
             };
+            sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            sideBtnTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+            sideBtnTable.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
 
-            // 2. Tính toán kích thước nút
-            int btnWidth = Math.Max(200, pnlSidebar.Width - 20);
-            int halfWidth = (btnWidth - 6) / 2;
-
-            Guna2Button MkSideBtn(string txt, Color c, int width, Padding margin) => new Guna2Button
+            Guna2Button MkSideBtn(string txt, Color c) => new Guna2Button
             {
                 Text = txt,
-                Width = width,
-                Height = 28,
+                Dock = DockStyle.Fill,
                 BorderRadius = 4,
                 FillColor = c,
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 8.25f, FontStyle.Bold),
-                Margin = margin,
+                Margin = new Padding(2),
                 Cursor = Cursors.Hand
             };
 
             // 3. Tạo các nút
-            var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246), halfWidth, new Padding(0, 0, 4, 4));
+            var btnSelectAll = MkSideBtn("Chọn Tất Cả", Color.FromArgb(59, 130, 246));
             btnSelectAll.Click += (s, e) => {
                 foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = true;
             };
 
-            var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139), halfWidth, new Padding(0, 0, 0, 4));
+            var btnSelectNone = MkSideBtn("Bỏ Chọn", Color.FromArgb(100, 116, 139));
             btnSelectNone.Click += (s, e) => {
                 foreach (DataGridViewRow r in _gridDevices.Rows) r.Cells[0].Value = false;
             };
 
-            var btnRefreshSide = MkSideBtn("Làm mới", Color.FromArgb(16, 185, 129), halfWidth, new Padding(0, 0, 4, 4));
+            var btnRefreshSide = MkSideBtn("Làm mới", Color.FromArgb(16, 185, 129));
             btnRefreshSide.Click += async (s, e) => await ReloadDevices();
 
-            var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11), halfWidth, new Padding(0, 0, 0, 4));
+            var btnRenameSide = MkSideBtn("Đổi tên", Color.FromArgb(245, 158, 11));
             btnRenameSide.Click += (s, e) => ActionRenameSelected();
 
-            var btnUpdateSide = MkSideBtn($"Cập nhật (v{AppUpdater.CurrentVersionString})", Color.FromArgb(79, 70, 229), btnWidth, new Padding(0));
+            var btnUpdateSide = MkSideBtn($"Cập nhật (v{AppUpdater.CurrentVersionString})", Color.FromArgb(79, 70, 229));
             btnUpdateSide.Click += async (s, e) =>
             {
                 btnUpdateSide.Enabled = false;
@@ -208,8 +208,12 @@ namespace ToolAdb
                 finally { if (!btnUpdateSide.IsDisposed) btnUpdateSide.Enabled = true; }
             };
 
-            // Thêm vào FlowLayout
-            flowSideBtns.Controls.AddRange(new Control[] { btnSelectAll, btnSelectNone, btnRefreshSide, btnRenameSide, btnUpdateSide });
+            sideBtnTable.Controls.Add(btnSelectAll, 0, 0);
+            sideBtnTable.Controls.Add(btnSelectNone, 1, 0);
+            sideBtnTable.Controls.Add(btnRefreshSide, 0, 1);
+            sideBtnTable.Controls.Add(btnRenameSide, 1, 1);
+            sideBtnTable.Controls.Add(btnUpdateSide, 0, 2);
+            sideBtnTable.SetColumnSpan(btnUpdateSide, 2);
 
             // 4. Bảng Thiết bị (Guna2DataGridView)
             _gridDevices = new Guna2DataGridView
@@ -298,7 +302,7 @@ namespace ToolAdb
             // Đã xóa sự kiện click của QScrcpyPlus
 
             pnlSidebar.Controls.Add(lblSideTitle);
-            pnlSidebar.Controls.Add(flowSideBtns);
+            pnlSidebar.Controls.Add(sideBtnTable);
             pnlSidebar.Controls.Add(_gridDevices);
             _gridDevices.BringToFront();
 
@@ -413,6 +417,7 @@ namespace ToolAdb
 
             // Chỉ cần thêm thẳng giao diện chính vào Form
             this.Controls.Add(splitMain);
+            try { splitMain.SplitterDistance = 260; } catch { }
 
             // Đảm bảo nó luôn nằm trên cùng (dù thực ra giờ chỉ còn một mình nó)
             splitMain.BringToFront();
