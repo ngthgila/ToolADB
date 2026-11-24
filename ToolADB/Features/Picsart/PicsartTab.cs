@@ -41,11 +41,13 @@ namespace ToolAdb.Features.Picsart
             AddAction("🔍 Kiểm tra", PicsartAction.Inspect, Slate, null, "Kiểm tra cấu hình");
             AddAction("💳 Mở bảng giá", PicsartAction.OpenPricing, Blue, null, "Mở bảng giá Picsart");
             AddAction("Pro 64.99 (500Cr)", PicsartAction.ProMonthly, Violet, picsartIcon, "Pro tháng 64.99 TRY (500 credit)",
-                "Thao tác sẽ xóa token thuê bao cũ, đổi device id, loại bỏ gói 100 credit / 599.99 TRY và mở thẳng gói Pro 1 tháng 64.99 TRY (500 credit - subscription_pro_1_monthly).");
+                "Thao tác sẽ xóa token thuê bao cũ, đổi device id, loại bỏ gói 100 credit / 599.99 TRY và mở thẳng gói Pro 1 tháng 64.99 TRY (500 credit - subscription_pro_monthly_50).");
             AddAction("Ultra (1500Cr)", PicsartAction.UltraMonthly, Orange, picsartIcon, "Ultra tháng (1500 credit)",
                 "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
-            AddAction("Pro 38.99 TRY", PicsartAction.Pro5Yearly, Emerald, picsartIcon, "Pro Năm 38.99 TRY (500 credit)",
-                "Thao tác sẽ xóa token thuê bao cũ và mở thẳng gói Pro Năm 38.99 TRY (500 credit - subscription_pro_5_yearly).");
+            AddAction("Pro 132.5 (NoTrial)", PicsartAction.Pro1YearlyNoTrial, Emerald, picsartIcon, "Pro Năm 132.50 TRY (bỏ trial)",
+                "Thao tác sẽ xóa token thuê bao cũ, bỏ trial 7 ngày của subscription_pro_1_yearly và mở thẳng gói Pro Năm 132.50 TRY.");
+            AddAction("Pro 155.99 (Base)", PicsartAction.ProYearlyNoTrial, Blue, picsartIcon, "Pro Năm 155.99 TRY (base không trial)",
+                "Thao tác sẽ xóa token thuê bao cũ và mở thẳng gói Pro Năm 155.99 TRY (subscription_pro_yearly_no_trial).");
             AddAction("Pro 78/155 TRY", PicsartAction.Pro4YearlyIntro, Violet, picsartIcon, "Pro Năm 78/155 TRY",
                 "Thao tác sẽ xóa token thuê bao cũ, ép gói Pro Năm Intro (subscription_pro_4_yearly) và ghim offer intro-price (TRY 78.00/năm × 2 năm nếu acc còn đủ điều kiện).");
             AddAction("BF 50% 120 TRY", PicsartAction.ProBf2026Yearly, Fuchsia, picsartIcon, "Pro Năm BF 50% (120 TRY)",

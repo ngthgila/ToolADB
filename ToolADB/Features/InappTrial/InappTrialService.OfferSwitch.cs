@@ -439,6 +439,26 @@ namespace ToolAdb.Features.InappTrial
             return !string.IsNullOrEmpty(result);
         }
 
+        internal bool PinBasePlanForSkuIfCached(string serial, string packageFilter, string skuId)
+        {
+            if (string.IsNullOrEmpty(skuId))
+                return false;
+
+            string result = RunOfferTransform(
+                serial,
+                packageFilter,
+                (_, srcOffers) =>
+                {
+                    JsonArray baseOnly = FilterSubscriptionOffers(srcOffers, winbackMode: false, out string note);
+                    return note == "base" && baseOnly.Count > 0 ? (baseOnly, "pinned_base") : (null, null);
+                },
+                (updatedRows, _, counts) => counts.GetValueOrDefault("pinned_base") > 0 ? $"OK:{updatedRows}" : null,
+                skuIdFilter: skuId,
+                relaunchApp: false,
+                throwIfNotFound: false);
+            return !string.IsNullOrEmpty(result);
+        }
+
         internal string RunOfferTransform(
             string serial,
             string packageFilter,
