@@ -11,6 +11,7 @@ namespace ToolAdb.Features.Picsart
         Inspect,
         OpenPricing,
         ProMonthly,
+        ProMonthlyIndia500,
         UltraMonthly,
         Pro1YearlyNoTrial,
         ProYearlyNoTrial,
@@ -30,9 +31,10 @@ namespace ToolAdb.Features.Picsart
     {
         private const string Package = "com.picsart.studio";
         private const string DataPath = "/data/data/" + Package;
-        private const string ProMonthly500Sku = "subscription_pro_monthly_50"; // 64.99 TRY, 500 credit (subscription_pro_1_monthly đã tăng lên 454.99 TRY)
+        private const string ProMonthly50Sku = "subscription_pro_monthly_50"; // 64.99 TRY / 89 INR (server hiện hạ còn 50 credit)
+        private const string ProMonthlyIndia500Sku = "subscription_pro_monthly_1"; // 119 INR/tháng ở Ấn Độ -> đủ 500 credit (bên Thổ 3,599.99 TRY)
         private const string ProYearly132Sku = "subscription_pro_1_yearly";    // 132.50 TRY/năm (bỏ trial -> giữ base)
-        private const string ProYearly156Sku = "subscription_pro_yearly_no_trial"; // 155.99 TRY/năm (base không trial)
+        private const string ProYearly156Sku = "subscription_pro_yearly_no_trial"; // 155.99 TRY/năm (base không trial, 500 credit/tháng)
         private readonly AdbClient _adb;
 
         internal PicsartService(AdbClient adb) => _adb = adb;
@@ -66,16 +68,14 @@ namespace ToolAdb.Features.Picsart
                         + TaintWarning(serial);
 
                 case PicsartAction.ProMonthly:
-                    CaptureAdb(serial, 25000, "shell",
-                        "am force-stop com.picsart.studio; " +
-                        GetCleanSubscriptionCacheSnippet(newDeviceId) +
-                        PatchMonthlySnippet +
-                        "sed -i 's/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g' /data/data/com.picsart.studio/files/settings.json 2>/dev/null; " +
-                        FixPermissionsSnippet +
-                        DirectSubscribeDeepLinkCmd(ProMonthly500Sku));
-                    Thread.Sleep(5500);
-                    return $"📅 Đã bỏ gói 100Cr/599.99 TRY, xóa token cũ & mở thẳng Pro 1 Tháng 64.99 TRY (500Cr - {ProMonthly500Sku})!"
-                        + TaintWarning(serial);
+                    return LaunchDirectMonthlyPlan(
+                        serial, newDeviceId, ProMonthly50Sku,
+                        $"📅 Đã xóa token cũ & mở thẳng Pro 1 Tháng 64.99 TRY / 89 INR (50Cr - {ProMonthly50Sku})!");
+
+                case PicsartAction.ProMonthlyIndia500:
+                    return LaunchDirectMonthlyPlan(
+                        serial, newDeviceId, ProMonthlyIndia500Sku,
+                        $"🇮🇳 Đã xóa token cũ & mở thẳng Pro Tháng Ấn Độ ₹119.00 (500Cr - {ProMonthlyIndia500Sku})!");
 
                 case PicsartAction.Reset:
                     CaptureAdb(serial, 25000, "shell",
@@ -94,11 +94,11 @@ namespace ToolAdb.Features.Picsart
                     CaptureAdb(serial, 25000, "shell",
                         "am force-stop com.picsart.studio; " +
                         GetCleanSubscriptionCacheSnippet(newDeviceId) +
-                        PatchMonthlySnippet +
+                        BuildPatchMonthlySnippet(ProMonthly50Sku) +
                         FixPermissionsSnippet +
                         "monkey -p com.picsart.studio -c android.intent.category.LAUNCHER 1");
                     Thread.Sleep(4500);
-                    return "✅ Đã Fix Dính Pro + Ép Gói 1 Tháng 64.99 TRY / 500Cr (giữ nguyên Gmail & nick Picsart)."
+                    return "✅ Đã Fix Dính Pro + Ép Gói Tháng 64.99 TRY / 89 INR (50Cr, giữ nguyên Gmail & nick Picsart)."
                         + TaintWarning(serial);
 
                 case PicsartAction.Pro1YearlyNoTrial:
@@ -270,27 +270,49 @@ namespace ToolAdb.Features.Picsart
             "sed -i 's/app_start_subscription_status\" value=\"true/app_start_subscription_status\" value=\"false/g; s/SUBSCRIPTION\" value=\"true/SUBSCRIPTION\" value=\"false/g' /data/data/com.picsart.studio/shared_prefs/com.picsart.studio_preferences.xml 2>/dev/null; " +
             "rm -f /data/data/com.picsart.studio/files/device-id /data/data/com.picsart.studio/files/internal-device-id /data/data/com.picsart.studio/shared_prefs/subscription.shared.preferences.xml /data/data/com.picsart.studio/shared_prefs/com.facebook.internal.iap.IAP_CACHE_GPBLV2V7.xml; ";
 
-        private const string PatchMonthlySnippet =
-            "sed -i 's/\"pro_weekly_100\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
-            "s/\"pro_weekly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
-            "s/\"ultra_monthly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; " +
-            "s/\"ultra_yearly\",\"is_selected\"/\"pro_yearly_trial\",\"is_selected\"/g; " +
-            "s/\"plus_weekly\",\"is_selected\"/\"plus_monthly\",\"is_selected\"/g; " +
-            "s/\"package_id\":\"subscription_pro_weekly\"/\"package_id\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_id\":\"subscription_ultra_monthly\"/\"package_id\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_id\":\"subscription_pro_monthly\"/\"package_id\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_id\":\"subscription_pro_1_monthly\"/\"package_id\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_id\":\"subscription_plus_weekly\"/\"package_id\":\"subscription_plus_tier_monthly\"/g; " +
-            "s/title_12/title_3/g; s/subtitle_8/subtitle_2/g; " +
-            // Loại bỏ gói 100Cr (subscription_pro_monthly_100 / subscription_pro_weekly_100), gói 454.99 TRY (subscription_pro_1_monthly) và gói 599.99 TRY (subscription_pro_monthly);
-            // ép toàn bộ nút tháng/tuần Pro về subscription_pro_monthly_50 (64.99 TRY - 500 credit/tháng).
-            "s/\"package_sku\":\"subscription_pro_1_monthly\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_pro_monthly_100\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_pro_monthly\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_pro_weekly_100\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_pro_weekly\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_ultra_monthly_750_credits\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g; " +
-            "s/\"package_sku\":\"subscription_ultra_monthly\"/\"package_sku\":\"" + ProMonthly500Sku + "\"/g' /data/data/com.picsart.studio/files/settings.json 2>/dev/null; ";
+        private string LaunchDirectMonthlyPlan(string serial, string newDeviceId, string targetSku, string successMessage)
+        {
+            CaptureAdb(serial, 25000, "shell",
+                "am force-stop com.picsart.studio; " +
+                GetCleanSubscriptionCacheSnippet(newDeviceId) +
+                BuildPatchMonthlySnippet(targetSku) +
+                "sed -i 's/\"content_id\":\"plus_tab_default\"}/\"content_id\":\"pro_tab_default\"}/g' /data/data/com.picsart.studio/files/settings.json 2>/dev/null; " +
+                FixPermissionsSnippet +
+                DirectSubscribeDeepLinkCmd(targetSku));
+            Thread.Sleep(5500);
+            return successMessage + TaintWarning(serial);
+        }
+
+        private static string BuildPatchMonthlySnippet(string targetMonthlySku)
+        {
+            string[] srcSkus =
+            {
+                "subscription_pro_weekly",
+                "subscription_ultra_monthly",
+                "subscription_pro_monthly",
+                "subscription_pro_1_monthly",
+                "subscription_pro_monthly_100",
+                "subscription_pro_weekly_100",
+                "subscription_ultra_monthly_750_credits",
+                "subscription_pro_monthly_50",
+                "subscription_pro_monthly_1",
+            };
+            var sed = new StringBuilder();
+            sed.Append("s/\"pro_weekly_100\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; ");
+            sed.Append("s/\"pro_weekly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; ");
+            sed.Append("s/\"ultra_monthly\",\"is_selected\"/\"pro_monthly\",\"is_selected\"/g; ");
+            sed.Append("s/\"ultra_yearly\",\"is_selected\"/\"pro_yearly_trial\",\"is_selected\"/g; ");
+            sed.Append("s/\"plus_weekly\",\"is_selected\"/\"plus_monthly\",\"is_selected\"/g; ");
+            foreach (string src in srcSkus)
+            {
+                if (src == targetMonthlySku) continue;
+                sed.Append("s/\"package_id\":\"").Append(src).Append("\"/\"package_id\":\"").Append(targetMonthlySku).Append("\"/g; ");
+                sed.Append("s/\"package_sku\":\"").Append(src).Append("\"/\"package_sku\":\"").Append(targetMonthlySku).Append("\"/g; ");
+            }
+            sed.Append("s/\"package_id\":\"subscription_plus_weekly\"/\"package_id\":\"subscription_plus_tier_monthly\"/g; ");
+            sed.Append("s/title_12/title_3/g; s/subtitle_8/subtitle_2/g");
+            return "sed -i '" + sed + "' /data/data/com.picsart.studio/files/settings.json 2>/dev/null; ";
+        }
 
         private const string PatchUltraSnippet =
             "sed -i 's/\"package_sku\":\"subscription_ultra_monthly_750_credits\"/\"package_sku\":\"subscription_ultra_monthly\"/g; " +
@@ -344,13 +366,15 @@ namespace ToolAdb.Features.Picsart
             if (output.Contains("\"package_sku\":\"subscription_pro_5_yearly\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_5_yearly\"", StringComparison.Ordinal))
                 plans.Add("⚠️ Pro Năm cũ (4,369.99 TRY)");
             if (output.Contains("\"package_sku\":\"subscription_pro_yearly_no_trial\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_yearly_no_trial\"", StringComparison.Ordinal))
-                plans.Add("💎 Pro Năm 155.99 TRY");
+                plans.Add("💎 Pro Năm 155.99 TRY (500Cr/T)");
             if (output.Contains("\"package_sku\":\"subscription_pro_1_monthly\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_1_monthly\"", StringComparison.Ordinal))
                 plans.Add("⚠️ Pro Tháng cũ (454.99 TRY)");
+            if (output.Contains("\"package_sku\":\"subscription_pro_monthly_1\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_monthly_1\"", StringComparison.Ordinal))
+                plans.Add("🇮🇳 Pro Tháng 119 INR (500Cr)");
             if (output.Contains("\"package_sku\":\"subscription_pro_monthly_50\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_monthly_50\"", StringComparison.Ordinal))
-                plans.Add("📅 Pro Tháng 64.99 TRY (500Cr)");
+                plans.Add("📅 Pro Tháng 64.99 TRY / 89 INR (50Cr)");
             if (output.Contains("\"package_sku\":\"subscription_pro_4_yearly\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_4_yearly\"", StringComparison.Ordinal))
-                plans.Add("⚡ Pro Năm 78/155 TRY");
+                plans.Add("⚡ Pro Năm 78/155 TRY (500Cr/T)");
             if (output.Contains("\"package_sku\":\"sub_pro_yearly_250_winback_bf2026\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"sub_pro_yearly_250_winback_bf2026\"", StringComparison.Ordinal))
                 plans.Add("🎁 Pro Năm BF 50% (120 TRY)");
             if (output.Contains("\"package_sku\":\"subscription_pro_1_yearly\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_1_yearly\"", StringComparison.Ordinal))
@@ -358,7 +382,7 @@ namespace ToolAdb.Features.Picsart
             if (output.Contains("subscription_ultra_monthly", StringComparison.Ordinal))
                 plans.Add("🔥 Ultra tháng (1500 credit)");
             if (output.Contains("\"package_sku\":\"subscription_pro_monthly_100\"", StringComparison.Ordinal))
-                plans.Add("⚠️ gói tháng 100Cr");
+                plans.Add("⚠️ gói tháng _100 (50Cr)");
             if (output.Contains("\"package_sku\":\"subscription_pro_monthly\"", StringComparison.Ordinal) || output.Contains("\"package_id\":\"subscription_pro_monthly\"", StringComparison.Ordinal))
                 plans.Add("gói tháng gốc (599.99 TRY)");
             else if (output.Contains("pro_monthly", StringComparison.Ordinal) || output.Contains("plus_monthly", StringComparison.Ordinal))

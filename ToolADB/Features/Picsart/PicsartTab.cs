@@ -40,16 +40,18 @@ namespace ToolAdb.Features.Picsart
             var picsartIcon = TabUi.LoadAppIcon("picsart.png");
             AddAction("🔍 Kiểm tra", PicsartAction.Inspect, Slate, null, "Kiểm tra cấu hình");
             AddAction("💳 Mở bảng giá", PicsartAction.OpenPricing, Blue, null, "Mở bảng giá Picsart");
-            AddAction("Pro 64.99 (500Cr)", PicsartAction.ProMonthly, Violet, picsartIcon, "Pro tháng 64.99 TRY (500 credit)",
-                "Thao tác sẽ xóa token thuê bao cũ, đổi device id, loại bỏ gói 100 credit / 599.99 TRY và mở thẳng gói Pro 1 tháng 64.99 TRY (500 credit - subscription_pro_monthly_50).");
+            AddAction("Pro 119 INR (500Cr)", PicsartAction.ProMonthlyIndia500, Emerald, picsartIcon, "Ấn Độ (INR): Pro tháng 119 INR (đủ 500 credit)",
+                "⚠️ CHỈ DÙNG CHO MÁY CH PLAY VÙNG ẤN ĐỘ (INR: ₹119.00/tháng — bên Thổ SKU này giá tới 3,599.99 TRY).\nThao tác sẽ xóa token thuê bao cũ, đổi device id và mở thẳng gói Pro 1 tháng ₹119.00 (đủ 500 credit - subscription_pro_monthly_1).");
+            AddAction("Pro 64.99 (50Cr)", PicsartAction.ProMonthly, Violet, picsartIcon, "Pro tháng 64.99 TRY / 89 INR (chỉ còn 50 credit)",
+                "Thao tác sẽ xóa token thuê bao cũ, đổi device id và mở thẳng subscription_pro_monthly_50 (64.99 TRY / 89 INR — lưu ý server hiện chỉ cấp 50 credit).");
             AddAction("Ultra (1500Cr)", PicsartAction.UltraMonthly, Orange, picsartIcon, "Ultra tháng (1500 credit)",
                 "Thao tác sẽ xóa token thuê bao cũ và ép cấu hình bảng giá sang gói Ultra 1 tháng (1500 credit).");
             AddAction("Pro 132.5 (NoTrial)", PicsartAction.Pro1YearlyNoTrial, Emerald, picsartIcon, "Pro Năm 132.50 TRY (bỏ trial)",
                 "Thao tác sẽ xóa token thuê bao cũ, bỏ trial 7 ngày của subscription_pro_1_yearly và mở thẳng gói Pro Năm 132.50 TRY.");
             AddAction("Pro 155.99 (Base)", PicsartAction.ProYearlyNoTrial, Blue, picsartIcon, "Pro Năm 155.99 TRY (base không trial)",
                 "Thao tác sẽ xóa token thuê bao cũ và mở thẳng gói Pro Năm 155.99 TRY (subscription_pro_yearly_no_trial).");
-            AddAction("Pro 78/155 TRY", PicsartAction.Pro4YearlyIntro, Violet, picsartIcon, "Pro Năm 78/155 TRY",
-                "Thao tác sẽ xóa token thuê bao cũ, ép gói Pro Năm Intro (subscription_pro_4_yearly) và ghim offer intro-price (TRY 78.00/năm × 2 năm nếu acc còn đủ điều kiện).");
+            AddAction("Pro 78/155 (500Cr)", PicsartAction.Pro4YearlyIntro, Violet, picsartIcon, "Pro Năm 78/155 TRY - đủ 500Cr/tháng × 1 năm",
+                "Thao tác sẽ xóa token thuê bao cũ, ép gói Pro Năm Intro (subscription_pro_4_yearly - đã kiểm chứng đủ 500 credit/tháng suốt 1 năm; 78 TRY nếu còn intro, hoặc 155.99 TRY gốc; Ấn ₹422.50 / ₹845).");
             AddAction("BF 50% 120 TRY", PicsartAction.ProBf2026Yearly, Fuchsia, picsartIcon, "Pro Năm BF 50% (120 TRY)",
                 "Thao tác sẽ xóa token thuê bao cũ, ép gói BF2026 (sub_pro_yearly_250_winback_bf2026) và ghim offer discount-50 (TRY 120.00/năm nếu acc đủ điều kiện, gốc 239.99).");
             AddAction("Trial 7N (132.5)", PicsartAction.Pro1YearlyTrial, Teal, picsartIcon, "Pro Trial 7N (132.5 TRY)",
